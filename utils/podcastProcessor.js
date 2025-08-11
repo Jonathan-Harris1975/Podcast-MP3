@@ -11,17 +11,18 @@ const r2PodcastClient = new S3Client({
   region: 'auto',
   endpoint: process.env.R2_ENDPOINT,
   credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY
+    accessKeyId: process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY, // Supports both naming conventions
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY // Supports both naming conventions
+  }
   }
 });
 
 // Constants
-const INTRO_DURATION = 15; // seconds
-const OUTRO_DURATION = 16; // seconds
-const FADE_IN_DURATION = 2; // seconds
+const INTRO_DURATION = 16; // seconds
+const OUTRO_DURATION = 15; // seconds
+const FADE_IN_DURATION = 6; // seconds
 const CONTENT_FADE_OUT_START = 60; // seconds
-const CONTENT_FADE_OUT_DURATION = 3; // seconds
+const CONTENT_FADE_OUT_DURATION = 6; // seconds
 
 // Generate short TT-prefixed ID (e.g. TT-A5X9F3)
 const generateShortId = () => `TT-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
