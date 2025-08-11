@@ -108,7 +108,7 @@ app.get('/health', (req, res) => {
 });
 
 // TTS Processing Endpoint
-app.post('/api/process', apiLimiter, async (req, res) => {
+app.post('/process', apiLimiter, async (req, res) => {
   const startTime = Date.now();
   const { sessionId, urls, options = {} } = req.body;
 
@@ -159,7 +159,7 @@ app.post('/api/process', apiLimiter, async (req, res) => {
 // Podcast Generation Endpoint
 app.post('/podcast', apiLimiter, async (req, res) => {
   const startTime = Date.now();
-  const { sessionId, introUrl, outroUrl } = req.body;
+  const { sessionId } = req.body;
 
   try {
     if (!sessionId?.match(/^TT-\d{4}-\d{2}-\d{2}/)) {
