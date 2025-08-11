@@ -1,18 +1,17 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import logger from './logger.js';
 
-const r2mergedClient = new S3Client({
+const r2MergedClient = new S3Client({
   region: 'auto',
   endpoint: process.env.R2_ENDPOINT,
   credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY, // Supports both naming conventions
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY // Supports both naming conventions
+    accessKeyId: process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY
   },
   maxAttempts: 3
 });
 
-export async function uploadToR2Merged(key, body, contentType = 'audio/mpeg') {
-  // Use the new standardized variable names
+export async function r2merged(key, body, contentType = 'audio/mpeg') {
   const bucket = process.env.R2_BUCKET_CHUNKS_MERGED;
   const publicBase = process.env.R2_PUBLIC_BASE_URL_CHUNKS_MERGED;
 
@@ -43,7 +42,7 @@ export async function uploadToR2Merged(key, body, contentType = 'audio/mpeg') {
     );
 
     const publicUrl = `${publicBase.replace(/\/+$/, '')}/${key.replace(/^\/+/, '')}`;
-    
+
     logger.info('Successfully uploaded merged file', {
       bucket,
       key,
@@ -63,4 +62,4 @@ export async function uploadToR2Merged(key, body, contentType = 'audio/mpeg') {
     });
     throw new Error(`Failed to upload merged file: ${error.message}`);
   }
-      }
+}
