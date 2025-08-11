@@ -1,12 +1,13 @@
 {
   "name": "tts-chunker-service",
-  "version": "3.0.2",
+  "version": "3.0.3",  // Updated version
   "description": "Production-ready TTS processing service with R2 storage",
   "type": "module",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "test": "NODE_ENV=test jest --coverage"
+    "test": "NODE_ENV=test jest --coverage",
+    "render-build": "chmod +x install-ffmpeg.sh && ./install-ffmpeg.sh"
   },
   "engines": {
     "node": ">=20.18.1",
@@ -20,9 +21,14 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.1",
     "express": "^4.18.2",
+    "express-healthcheck": "^1.0.1",  // Added missing dependency
     "express-rate-limit": "^7.1.3",
+    "ffmpeg-static": "^5.1.0",  // Added for audio processing
     "helmet": "^7.1.0",
     "uuid": "^9.0.1",
     "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
   }
 }
