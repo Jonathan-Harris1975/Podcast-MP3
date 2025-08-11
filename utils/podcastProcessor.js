@@ -202,5 +202,6 @@ async function cleanTempFiles(tempDir, sessionId) {
   await Promise.allSettled(
     patterns.map(pattern => 
       fs.unlink(path.join(tempDir, pattern)).catch(() => {})
+    )
   );
-    }
+}
