@@ -1,24 +1,66 @@
-async function checkR2Config() {
-  try {
-    const endpoint = process.env.R2_ENDPOINT;
-    const accessKeyPresent = !!(process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY);
-    const secretKeyPresent = !!(process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY);
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import logger from './logger.js';
 
-    if (!endpoint || !accessKeyPresent || !secretKeyPresent) {
-      throw new Error('Missing R2 configuration');
-    }
+const r2MergedClient = new S3Client({
+  region: 'auto',
+  endpoint: process.env.R2_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY
+  },
+  maxAttempts: 3
+});
 
-    await r2Client.send(new ListBucketsCommand({}));
-    return true;
-  } catch (error) {
-    logger.error('R2 configuration check failed', {
-      error: error.message,
-      config: {
-        endpoint: !!process.env.R2_ENDPOINT,
-        accessKey: !!(process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY),
-        secretKey: !!(process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY)
-      }
+export async function uploadToR2Merged(key, body, contentType = 'audio/mpeg') {
+  // Use the new standardized variable names
+  const bucket = process.env.R2_BUCKET_CHUNKS_MERGED;
+  const publicBase = process.env.R2_PUBLIC_BASE_URL_CHUNKS_MERGED;
+
+  if (!bucket) {
+    logger.error('Missing R2 merged bucket name', {
+      availableVars: Object.keys(process.env).filter(k => k.includes('BUCKET'))
     });
-    return false;
+    throw new Error('Configuration error: No merged bucket specified');
   }
-}
+
+  if (!publicBase) {
+    logger.error('Missing R2 merged public URL', {
+      availableVars: Object.keys(process.env).filter(k => k.includes('PUBLIC'))
+    });
+    throw new Error('Configuration error: No public URL base specified');
+  }
+
+  try {
+    const result = await r2MergedClient.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        Body: body,
+        ContentType: contentType,
+        ACL: 'public-read',
+        CacheControl: 'public, max-age=31536000, immutable'
+      })
+    );
+
+    const publicUrl = `${publicBase.replace(/\/+$/, '')}/${key.replace(/^\/+/, '')}`;
+    
+    logger.info('Successfully uploaded merged file', {
+      bucket,
+      key,
+      url: publicUrl,
+      size: body.length,
+      etag: result.ETag
+    });
+
+    return publicUrl;
+  } catch (error) {
+    logger.error('R2 upload failed', {
+      error: error.message,
+      stack: error.stack,
+      bucket,
+      key,
+      bodySize: body?.length
+    });
+    throw new Error(`Failed to upload merged file: ${error.message}`);
+  }
+      }
