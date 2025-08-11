@@ -1,6 +1,6 @@
 {
   "name": "tts-chunker-service",
-  "version": "3.0.3",  // Updated version
+  "version": "3.0.3",
   "description": "Production-ready TTS processing service with R2 storage",
   "type": "module",
   "main": "index.js",
