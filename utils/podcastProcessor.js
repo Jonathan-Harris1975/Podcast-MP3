@@ -14,8 +14,7 @@ const r2PodcastClient = new S3Client({
     accessKeyId: process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY, // Supports both naming conventions
     secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY // Supports both naming conventions
   }
-  }
-});
+  });
 
 // Constants
 const INTRO_DURATION = 16; // seconds
