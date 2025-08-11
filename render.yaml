@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: tts-chunker-service
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
