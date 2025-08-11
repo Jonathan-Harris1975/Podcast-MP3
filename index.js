@@ -5,7 +5,7 @@ import rateLimit from 'express-rate-limit';
 import logger from './utils/logger.js';
 import { processURLsToMergedTTS } from './utils/ttsProcessor.js';
 import { createPodcast } from './utils/podcastProcessor.js';
-import { checkR2Config } from './utils/r2merged.js';
+import { r2merged } from './utils/r2merged.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -19,7 +19,7 @@ const PORT = process.env.PORT || 3000;
 async function validateEnvironment() {
   const errors = [];
 
-  if (!(await checkR2Config())) {
+  if (!(await r2merged())) {
     errors.push('R2 configuration invalid');
     logger.error('R2 configuration validation failed');
   }
