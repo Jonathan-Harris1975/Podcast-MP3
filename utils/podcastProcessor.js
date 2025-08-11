@@ -16,14 +16,18 @@ const r2PodcastClient = new S3Client({
   }
 });
 
-// Constants for audio processing
+// Constants
 const INTRO_DURATION = 15; // seconds
 const OUTRO_DURATION = 16; // seconds
 const FADE_IN_DURATION = 2; // seconds
-const CONTENT_FADE_OUT_START = 60; // Start fade out at 60s
+const CONTENT_FADE_OUT_START = 60; // seconds
 const CONTENT_FADE_OUT_DURATION = 3; // seconds
 
+// Generate short TT-prefixed ID (e.g. TT-A5X9F3)
+const generateShortId = () => `TT-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+
 export async function createPodcast(sessionId, mergedUrl, introUrl, outroUrl) {
+  const startTime = Date.now();
   const tempDir = '/tmp/audio-processing';
   await fs.mkdir(tempDir, { recursive: true });
 
@@ -49,41 +53,57 @@ export async function createPodcast(sessionId, mergedUrl, introUrl, outroUrl) {
     const podcastKey = `${sessionId}.mp3`;
     const podcastUrl = await uploadToPodcastBucket(outputFile, podcastKey);
 
+    // 6. Generate response
     return {
-      url: podcastUrl,
+      success: true,
+      sessionId,
+      podcastUrl,
       duration: metadata.duration,
-      size: metadata.size,
-      sizeMB: (metadata.size / (1024 * 1024)).toFixed(2) + ' MB',
-      bitrate: '192kbps',
-      sampleRate: '44.1kHz'
+      fileSize: metadata.size,
+      fileSizeHuman: (metadata.size / (1024 * 1024)).toFixed(2) + ' MB',
+      uuid: generateShortId(),
+      technicalDetails: {
+        bitrate: '192kbps',
+        sampleRate: '44.1kHz',
+        channels: 'stereo',
+        format: 'MP3',
+        processingTimeMs: Date.now() - startTime
+      },
+      timings: {
+        introDuration: formatDuration(INTRO_DURATION),
+        contentDuration: formatDuration(metadata.seconds - INTRO_DURATION - OUTRO_DURATION),
+        outroDuration: formatDuration(OUTRO_DURATION)
+      }
     };
 
+  } catch (error) {
+    logger.error('Podcast creation failed', {
+      sessionId,
+      error: error.message,
+      stack: error.stack
+    });
+    throw error;
   } finally {
-    // Cleanup temporary files
     await cleanTempFiles(tempDir, sessionId);
   }
 }
 
+// Helper functions
 async function downloadAudio(url, destination) {
-  try {
-    const response = await axios({
-      url,
-      method: 'GET',
-      responseType: 'stream',
-      timeout: 30000
-    });
+  const response = await axios({
+    url,
+    method: 'GET',
+    responseType: 'stream',
+    timeout: 30000
+  });
 
-    const writer = fs.createWriteStream(destination);
-    response.data.pipe(writer);
+  const writer = fs.createWriteStream(destination);
+  response.data.pipe(writer);
 
-    return new Promise((resolve, reject) => {
-      writer.on('finish', () => resolve(destination));
-      writer.on('error', reject);
-    });
-  } catch (error) {
-    logger.error('Audio download failed', { url, error: error.message });
-    throw new Error(`Failed to download audio from ${url}`);
-  }
+  return new Promise((resolve, reject) => {
+    writer.on('finish', () => resolve(destination));
+    writer.on('error', reject);
+  });
 }
 
 async function validateAudioFiles(introPath, outroPath) {
@@ -93,11 +113,11 @@ async function validateAudioFiles(introPath, outroPath) {
   ]);
 
   if (introDuration < INTRO_DURATION) {
-    throw new Error(`Intro must be at least ${INTRO_DURATION}s (current: ${introDuration}s)`);
+    throw new Error(`Intro must be at least ${INTRO_DURATION}s (got ${introDuration}s)`);
   }
 
   if (outroDuration < OUTRO_DURATION) {
-    throw new Error(`Outro must be at least ${OUTRO_DURATION}s (current: ${outroDuration}s)`);
+    throw new Error(`Outro must be at least ${OUTRO_DURATION}s (got ${outroDuration}s)`);
   }
 }
 
@@ -107,57 +127,39 @@ async function processAudioWithPrecision(introPath, contentPath, outroPath, outp
     `-i "${introPath}"`,
     `-i "${contentPath}"`,
     `-i "${outroPath}"`,
-    
-    // Precise audio filtering
     '-filter_complex',
     `"[0]atrim=0:${INTRO_DURATION},` +
     `afade=t=in:st=0:d=${FADE_IN_DURATION},` +
     `afade=t=out:st=${INTRO_DURATION-FADE_IN_DURATION}:d=${FADE_IN_DURATION}[a0];` +
-    
     `[1]afade=t=in:st=0:d=1,` +
     `afade=t=out:st=${CONTENT_FADE_OUT_START}:d=${CONTENT_FADE_OUT_DURATION}[a1];` +
-    
     `[2]atrim=0:${OUTRO_DURATION},` +
     `afade=t=in:st=0:d=${FADE_IN_DURATION}[a2];` +
-    
     `[a0][a1][a2]concat=n=3:v=0:a=1"`,
-    
-    // Professional audio settings
-    '-c:a libmp3lame -q:a 1', // Highest quality
-    '-b:a 192k',              // Bitrate
-    '-ar 44100',              // Sample rate
-    '-ac 2',                  // Stereo
+    '-c:a libmp3lame -q:a 1',
+    '-b:a 192k',
+    '-ar 44100',
+    '-ac 2',
     `"${outputPath}"`
   ].join(' ');
 
-  try {
-    await execPromise(cmd);
-  } catch (error) {
-    logger.error('Audio processing failed', {
-      command: cmd,
-      error: error.message
-    });
-    throw new Error('Professional audio mixing failed');
-  }
+  await execPromise(cmd);
 }
 
 async function getAudioMetadata(filePath) {
-  try {
-    const durationCmd = `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`;
-    const duration = parseFloat(await execPromise(durationCmd).stdout.trim());
-    
-    const stats = await fs.stat(filePath);
-    const size = stats.size;
+  const duration = await getAudioDuration(filePath);
+  const stats = await fs.stat(filePath);
+  
+  return {
+    duration: formatDuration(duration),
+    seconds: duration,
+    size: stats.size
+  };
+}
 
-    return {
-      duration: formatDuration(duration),
-      seconds: duration,
-      size
-    };
-  } catch (error) {
-    logger.error('Metadata extraction failed', { error: error.message });
-    throw new Error('Could not read audio metadata');
-  }
+async function getAudioDuration(filePath) {
+  const cmd = `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`;
+  return parseFloat(await execPromise(cmd).stdout.trim());
 }
 
 function formatDuration(seconds) {
@@ -171,30 +173,22 @@ function formatDuration(seconds) {
 }
 
 async function uploadToPodcastBucket(filePath, key) {
-  try {
-    const fileData = await fs.readFile(filePath);
-    
-    await r2PodcastClient.send(new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET_PODCAST,
-      Key: key,
-      Body: fileData,
-      ContentType: 'audio/mpeg',
-      ACL: 'public-read',
-      CacheControl: 'public, max-age=31536000, immutable',
-      Metadata: {
-        'x-amz-meta-processed': 'true',
-        'x-amz-meta-service': 'tts-chunker'
-      }
-    }));
+  const fileData = await fs.readFile(filePath);
+  
+  await r2PodcastClient.send(new PutObjectCommand({
+    Bucket: process.env.R2_BUCKET_PODCAST,
+    Key: key,
+    Body: fileData,
+    ContentType: 'audio/mpeg',
+    ACL: 'public-read',
+    CacheControl: 'public, max-age=31536000, immutable',
+    Metadata: {
+      'x-amz-meta-processed': 'true',
+      'x-amz-meta-service': 'tts-chunker'
+    }
+  }));
 
-    return `${process.env.R2_PUBLIC_BASE_URL_PODCAST.replace(/\/+$/, '')}/${key}`;
-  } catch (error) {
-    logger.error('Podcast upload failed', {
-      bucket: process.env.R2_BUCKET_PODCAST,
-      error: error.message
-    });
-    throw new Error('Failed to upload final podcast');
-  }
+  return `${process.env.R2_PUBLIC_BASE_URL_PODCAST.replace(/\/+$/, '')}/${key}`;
 }
 
 async function cleanTempFiles(tempDir, sessionId) {
@@ -208,11 +202,5 @@ async function cleanTempFiles(tempDir, sessionId) {
   await Promise.allSettled(
     patterns.map(pattern => 
       fs.unlink(path.join(tempDir, pattern)).catch(() => {})
-    )
   );
-}
-
-async function getAudioDuration(filePath) {
-  const cmd = `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`;
-  return parseFloat(await execPromise(cmd).stdout.trim());
-}
+    }
