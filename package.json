@@ -21,9 +21,9 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.1",
     "express": "^4.18.2",
-    "express-healthcheck": "^1.0.1",  // Added missing dependency
+    "express-healthcheck": "^1.0.1",
     "express-rate-limit": "^7.1.3",
-    "ffmpeg-static": "^5.1.0",  // Added for audio processing
+    "ffmpeg-static": "^5.1.0",  
     "helmet": "^7.1.0",
     "uuid": "^9.0.1",
     "winston": "^3.11.0"
