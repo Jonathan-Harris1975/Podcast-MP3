@@ -1,12 +1,12 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import logger from './logger.js';
 
-const r2MergedClient = new S3Client({
+const r2Client = new S3Client({
   region: 'auto',
   endpoint: process.env.R2_ENDPOINT,
   credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY
+    accessKeyId: process.env.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY, // Supports both naming conventions
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_KEY // Supports both naming conventions
   },
   maxAttempts: 3
 });
