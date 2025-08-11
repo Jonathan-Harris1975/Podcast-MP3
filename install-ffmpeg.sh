@@ -1,21 +1,45 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # Create necessary directories
-mkdir -p ./temp ./logs
+mkdir -p /tmp/audio-processing
+chmod 777 /tmp/audio-processing
 
-# Install FFmpeg on Render.com
+# Install FFmpeg and dependencies on Render
 if [ -n "$RENDER" ]; then
-  echo "Installing FFmpeg on Render.com"
-  apt-get update
-  apt-get install -y ffmpeg
+  echo "Installing audio processing tools on Render..."
+  apt-get update -qq
+  
+  # Install required packages
+  apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libmp3lame0 \
+    libopus0 \
+    libvorbisenc2 \
+    libfdk-aac2 \
+    sox \
+    libsox-fmt-mp3
+  
+  # Verify installations
+  echo "Verifying installed versions:"
+  ffmpeg -version | head -n 1
+  ffprobe -version | head -n 1
+  sox --version
+
+  # Clean up to reduce image size
+  apt-get clean
+  rm -rf /var/lib/apt/lists/*
 fi
 
-# Verify installation and check version
-if ! command -v ffmpeg &> /dev/null; then
-  echo "FFmpeg could not be found"
-  exit 1
-fi
+# Create symbolic links for consistent paths
+ln -sf $(which ffmpeg) /usr/local/bin/ffmpeg
+ln -sf $(which ffprobe) /usr/local/bin/ffprobe
+ln -sf $(which sox) /usr/local/bin/sox
 
-echo "FFmpeg version:"
-ffmpeg -version
+# Verify all tools are available
+echo "Final tool verification:"
+command -v ffmpeg
+command -v ffprobe
+command -v sox
+
+echo "Audio processing environment ready"
