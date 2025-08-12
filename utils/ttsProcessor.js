@@ -1,5 +1,5 @@
 import { generateTTS } from './googleTTS.js';
-import { uploadToR2Merged } from './r2merged.js';
+import { r2merged } from './r2merged.js';
 import axios from 'axios';
 import logger from './logger.js';
 import { chunkTextToSSML } from './ssmlTools.js';
@@ -34,8 +34,8 @@ export async function processURLsToMergedTTS(urls, sessionId) {
         try {
           const audioBuffer = await generateTTS(chunk);
           const chunkKey = `${sessionId}/chunk_${index}.mp3`;
-          const url = await uploadToR2Merged(chunkKey, audioBuffer);
-          chunkUrls.push(url);
+          const uploadedUrl = await r2merged(chunkKey, audioBuffer);
+          chunkUrls.push(uploadedUrl);
         } catch (error) {
           logger.error(`Chunk ${index} failed:`, error);
         }
