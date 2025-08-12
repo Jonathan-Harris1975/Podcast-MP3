@@ -16,7 +16,7 @@ export function makeUKSSML(text, strict = true) {
       match => `<sub alias="${UK_PHONETICS[match.toUpperCase()]}">${match}</sub>`)
     .replace(/(\d+)\/(\d+)\/(\d{4})/g, '<say-as interpret-as="date" format="dmy">$1/$2/$3</say-as>')
     .replace(/£(\d+\.?\d*)/g, '<say-as interpret-as="currency" currency="GBP">$1</say-as>')
-    .replace(/(?:\+44|0)\d{10}/g, '<say-as interpret-as="telephone">$&</say-as>');
+    .replace(/(?:\+44|0)\d{10}/g, match => `<say-as interpret-as="telephone">${match}</say-as>`);
 
   const ssml = `
     <speak>
