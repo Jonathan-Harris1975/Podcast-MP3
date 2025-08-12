@@ -2,11 +2,10 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import logger from './utils/logger.js';
-import { processURLsToMergedTTS } from './utils/ttsProcessor.js';
-import { createPodcast } from './utils/podcastProcessor.js';
-import { r2merged } from './utils/r2merged.js'; // <-- updated import
-import * as r2 from './utils/r2.js';
+import logger from './logger.js';
+import { processURLsToMergedTTS } from './ttsProcessor.js';
+import { createPodcast } from './podcastProcessor.js';
+import { r2merged } from './r2merged.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -20,19 +19,18 @@ const PORT = process.env.PORT || 3000;
 async function validateEnvironment() {
   const errors = [];
 
-  if (!(await r2.testConnection?.())) {
-    errors.push('Base R2 chunks bucket configuration invalid');
-    logger.error('Base R2 chunks bucket validation failed');
-  }
-
-  if (!(await r2merged())) {   // <-- call updated
-    errors.push('R2 merged storage configuration invalid');
-    logger.error('R2 merged storage validation failed');
+  if (!process.env.R2_BUCKET_CHUNKS_MERGED || !process.env.R2_PUBLIC_BASE_URL_CHUNKS_MERGED) {
+    errors.push('R2 merged bucket or public URL not configured');
+    logger.error('Base R2 chunks bucket validation failed', {
+      R2_BUCKET_CHUNKS_MERGED: process.env.R2_BUCKET_CHUNKS_MERGED,
+      R2_PUBLIC_BASE_URL_CHUNKS_MERGED: process.env.R2_PUBLIC_BASE_URL_CHUNKS_MERGED,
+    });
   }
 
   if (process.env.RENDER) {
     try {
       await execPromise('ffmpeg -version && ffprobe -version');
+      logger.info('FFmpeg and FFprobe verified');
     } catch (err) {
       errors.push('FFmpeg/FFprobe not available');
       logger.error('FFmpeg verification failed', { error: err.message });
@@ -40,7 +38,7 @@ async function validateEnvironment() {
   }
 
   if (errors.length > 0) {
-    logger.error('Environment validation failed', { errors });
+    errors.forEach(err => logger.error('Environment validation error:', err));
     process.exit(1);
   }
 }
@@ -72,13 +70,14 @@ app.use(express.json({
   verify: (req, res, buf) => {
     try {
       JSON.parse(buf.toString());
-    } catch (e) {
+    } catch {
       logger.error('Invalid JSON payload', {
         path: req.path,
         ip: req.ip,
-        bodySample: buf.toString().substring(0, 200)
+        bodySample: buf.toString().slice(0, 200)
       });
       res.status(400).json({ error: 'Invalid JSON format' });
+      throw new Error('Invalid JSON'); // To stop further processing
     }
   }
 }));
@@ -114,24 +113,19 @@ app.get('/health', (req, res) => {
   });
 });
 
-// TTS Processing Endpoint
 app.post('/process', apiLimiter, async (req, res) => {
   const startTime = Date.now();
   const { sessionId, urls, options = {} } = req.body;
 
+  if (!sessionId?.match(/^TT-\d{4}-\d{2}-\d{2}/)) {
+    return res.status(400).json({ error: 'Invalid sessionId format (expected TT-YYYY-MM-DD)' });
+  }
+
+  if (!Array.isArray(urls)) {
+    return res.status(400).json({ error: 'URLs must be provided as an array' });
+  }
+
   try {
-    if (!sessionId?.match(/^TT-\d{4}-\d{2}-\d{2}/)) {
-      return res.status(400).json({
-        error: 'Invalid sessionId format (expected TT-YYYY-MM-DD)'
-      });
-    }
-
-    if (!urls || !Array.isArray(urls)) {
-      return res.status(400).json({
-        error: 'URLs must be provided as an array'
-      });
-    }
-
     const result = await processURLsToMergedTTS(
       urls,
       sessionId,
@@ -145,15 +139,14 @@ app.post('/process', apiLimiter, async (req, res) => {
     return res.json({
       success: true,
       sessionId: result.sessionId,
-      chunks: result.chunks.map((url, index) => ({
+      chunks: result.chunks?.map((url, index) => ({
         index,
         url,
         bytesApprox: 0
-      })),
+      })) || [],
       mergedUrl: result.mergedUrl,
       processingTimeMs: Date.now() - startTime
     });
-
   } catch (error) {
     logger.error('TTS processing failed', error);
     return res.status(500).json({
@@ -163,18 +156,15 @@ app.post('/process', apiLimiter, async (req, res) => {
   }
 });
 
-// Podcast Generation Endpoint
 app.post('/podcast', apiLimiter, async (req, res) => {
   const startTime = Date.now();
   const { sessionId } = req.body;
 
-  try {
-    if (!sessionId?.match(/^TT-\d{4}-\d{2}-\d{2}/)) {
-      return res.status(400).json({
-        error: 'Invalid sessionId format (expected TT-YYYY-MM-DD)'
-      });
-    }
+  if (!sessionId?.match(/^TT-\d{4}-\d{2}-\d{2}/)) {
+    return res.status(400).json({ error: 'Invalid sessionId format (expected TT-YYYY-MM-DD)' });
+  }
 
+  try {
     const mergedUrl = `${process.env.R2_PUBLIC_BASE_URL_CHUNKS_MERGED}/${sessionId}/merged.mp3`;
     const podcastResult = await createPodcast(
       sessionId,
@@ -194,7 +184,6 @@ app.post('/podcast', apiLimiter, async (req, res) => {
       technicalDetails: podcastResult.technicalDetails,
       processingTimeMs: Date.now() - startTime
     });
-
   } catch (error) {
     logger.error('Podcast creation failed', {
       error: error.message,
