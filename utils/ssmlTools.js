@@ -12,12 +12,11 @@ export function makeUKSSML(text, strict = true) {
   if (!text?.trim()) return '<speak></speak>';
 
   let processed = text
-    .replace(new RegExp(Object.keys(UK_PHONETICS).join('|'), 'gi'), 
+    .replace(new RegExp(Object.keys(UK_PHONETICS).join('|'), 
       match => `<sub alias="${UK_PHONETICS[match.toUpperCase()]}">${match}</sub>`)
     .replace(/(\d+)\/(\d+)\/(\d{4})/g, '<say-as interpret-as="date" format="dmy">$1/$2/$3</say-as>')
     .replace(/£(\d+\.?\d*)/g, '<say-as interpret-as="currency" currency="GBP">$1</say-as>')
-    .replace(/(?:\+44|0)\d{10}/g, '<say-as interpret-as="telephone">$&</say-as>')
-    .replace(/([.!?])\s+/g, `$1<break time="${process.env.SSML_BREAK_MS || 420}ms"/>`);
+    .replace(/(?:\+44|0)\d{10}/g, '<say-as interpret-as="telephone">$&</say-as>');
 
   const ssml = `
     <speak>
@@ -38,3 +37,32 @@ export function makeUKSSML(text, strict = true) {
 
   return ssml;
 }
+
+export function chunkTextToSSML(text, maxLength = 4500, overlap = 50) {
+  if (!text?.trim()) return [];
+  
+  const segments = [];
+  let currentChunk = '';
+  const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+  
+  for (const sentence of sentences) {
+    if (currentChunk.length + sentence.length > maxLength) {
+      if (currentChunk) {
+        segments.push(makeUKSSML(currentChunk));
+        currentChunk = currentChunk.slice(-overlap) + sentence;
+      } else {
+        currentChunk = sentence;
+      }
+    } else {
+      currentChunk += sentence;
+    }
+  }
+  
+  if (currentChunk) segments.push(makeUKSSML(currentChunk));
+  return segments;
+}
+
+export default {
+  makeUKSSML,
+  chunkTextToSSML
+};
