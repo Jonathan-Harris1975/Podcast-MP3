@@ -5,7 +5,7 @@ import rateLimit from 'express-rate-limit';
 import logger from './utils/logger.js';
 import { processURLsToMergedTTS } from './utils/ttsProcessor.js';
 import { createPodcast } from './utils/podcastProcessor.js';
-import { uploadToR2Merged } from './utils/r2merged.js';
+import { r2merged } from './utils/r2merged.js'; // <-- updated import
 import * as r2 from './utils/r2.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -20,19 +20,16 @@ const PORT = process.env.PORT || 3000;
 async function validateEnvironment() {
   const errors = [];
 
-  // Check base chunks bucket connection
   if (!(await r2.testConnection?.())) {
     errors.push('Base R2 chunks bucket configuration invalid');
     logger.error('Base R2 chunks bucket validation failed');
   }
 
-  // Check merged bucket connection
-  if (!(await uploadToR2Merged())) {
+  if (!(await r2merged())) {   // <-- call updated
     errors.push('R2 merged storage configuration invalid');
     logger.error('R2 merged storage validation failed');
   }
 
-  // FFmpeg availability check (Render only)
   if (process.env.RENDER) {
     try {
       await execPromise('ffmpeg -version && ffprobe -version');
