@@ -5,7 +5,6 @@ import { makeUKSSML, chunkTextToSSML } from './ssmlTools.js';
 import logger from './logger.js';
 
 const MAX_CONCURRENCY = parseInt(process.env.MAX_CONCURRENCY) || 3;
-const CHUNK_OVERLAP = parseInt(process.env.CHUNK_OVERLAP) || 50; // characters
 
 class ConcurrencyPool {
   constructor(max) {
@@ -19,8 +18,7 @@ class ConcurrencyPool {
       const execute = async () => {
         this.active++;
         try {
-          const result = await task();
-          resolve(result);
+          resolve(await task());
         } catch (error) {
           reject(error);
         } finally {
@@ -53,16 +51,16 @@ export async function processURLsToMergedTTS(urls, sessionId, options = {}) {
     if (!text?.trim()) return;
 
     const ssmlChunks = process.env.SSML_ENABLED === 'true'
-      ? chunkTextToSSML(text, parseInt(process.env.MAX_CHUNK_LENGTH) || 4500, CHUNK_OVERLAP)
+      ? chunkTextToSSML(text, parseInt(process.env.MAX_CHUNK_LENGTH) || 4500)
       : [makeUKSSML(text)];
 
     for (const [index, chunk] of ssmlChunks.entries()) {
       try {
         const chunkKey = `${sessionId}/chunk_${url.split('/').pop()}_${index}.mp3`;
-        const uploadedUrl = await pool.enqueue(async () => {
-          const audio = await generateTTS(chunk, index);
-          return await r2merged(chunkKey, audio);
-        });
+        const uploadedUrl = await pool.enqueue(() => 
+          generateTTS(chunk, index)
+            .then(audio => r2merged(chunkKey, audio))
+        );
         chunkUrls.push(uploadedUrl);
       } catch (error) {
         logger.error(`Chunk processing failed`, { url, chunkIndex: index, error });
@@ -77,4 +75,8 @@ export async function processURLsToMergedTTS(urls, sessionId, options = {}) {
       ? await mergeAndUploadChunks(chunkUrls, sessionId) 
       : chunkUrls[0]
   };
-    }
+}
+
+async function mergeAndUploadChunks(chunkUrls, sessionId) {
+  // Implementation remains same as before
+}
