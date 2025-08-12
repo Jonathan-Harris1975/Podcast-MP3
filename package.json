@@ -1,6 +1,6 @@
 {
   "name": "tts-chunker-service",
-  "version": "3.0.4",
+  "version": "3.0.5",
   "type": "module",
   "scripts": {
     "start": "node index.js",
