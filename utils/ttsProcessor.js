@@ -2,10 +2,10 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import logger from './utils/logger.js';
-import { processURLsToMergedTTS } from './utils/ttsProcessor.js';
-import { createPodcast } from './utils/podcastProcessor.js';
-import { r2merged } from './utils/r2merged.js';
+import logger from './logger.js';
+import { processURLsToMergedTTS } from './ttsProcessor.js';
+import { createPodcast } from './podcastProcessor.js';
+import { r2merged } from './r2merged.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
