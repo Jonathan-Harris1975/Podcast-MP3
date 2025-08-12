@@ -1,6 +1,16 @@
 services:
   - type: web
-    name: tts-chunker-service
+    name: tts-uk-male-service
     env: node
-    buildCommand: npm install
+    buildCommand: |
+      chmod +x install-ffmpeg.sh
+      ./install-ffmpeg.sh
+      npm install
     startCommand: npm start
+    envVars:
+      - key: DEFAULT_VOICE
+        value: en-GB-Wavenet-D
+      - key: GCP_LOCATION
+        value: europe-west2
+      - key: AUDIO_ENHANCEMENTS_ENABLED
+        value: "true"
