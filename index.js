@@ -31,7 +31,7 @@ async function validateEnvironment() {
   if (!process.env.R2_BUCKET_CHUNKS || !process.env.R2_PUBLIC_BASE_URL_1) {
     errors.push('R2 chunks bucket or R2_PUBLIC_BASE_URL_1 not configured');
     logger.error('R2 chunks bucket validation failed', {
-      R2_BUCKET_CHUNKS: process.env.R2_BUCKET_CHUNKS,
+      R2_BUCKET_CHUNKS_T: process.env.R2_BUCKET_CHUNKS_T,
       R2_PUBLIC_BASE_URL_1: process.env.R2_PUBLIC_BASE_URL_1,
     });
   }
