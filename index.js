@@ -6,6 +6,7 @@ import logger from './utils/logger.js';
 import { processURLsToMergedTTS } from './utils/ttsProcessor.js';
 import { createPodcast } from './utils/podcastProcessor.js';
 import { r2merged } from './utils/r2merged.js';
+import { getURLsBySessionId } from './utils/textchunksR2.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -24,6 +25,14 @@ async function validateEnvironment() {
     logger.error('Base R2 chunks bucket validation failed', {
       R2_BUCKET_CHUNKS_MERGED: process.env.R2_BUCKET_CHUNKS_MERGED,
       R2_PUBLIC_BASE_URL_CHUNKS_MERGED: process.env.R2_PUBLIC_BASE_URL_CHUNKS_MERGED,
+    });
+  }
+
+  if (!process.env.R2_BUCKET_CHUNKS || !process.env.R2_PUBLIC_BASE_URL_1) {
+    errors.push('R2 chunks bucket or R2_PUBLIC_BASE_URL_1 not configured');
+    logger.error('R2 chunks bucket validation failed', {
+      R2_BUCKET_CHUNKS: process.env.R2_BUCKET_CHUNKS,
+      R2_PUBLIC_BASE_URL_1: process.env.R2_PUBLIC_BASE_URL_1,
     });
   }
 
@@ -113,19 +122,25 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.post('/process', apiLimiter, async (req, res) => {
+app.post("/process", apiLimiter, async (req, res) => {
   const startTime = Date.now();
-  const { sessionId, urls, options = {} } = req.body;
+  const { sessionId, options = {} } = req.body;
 
   if (!sessionId?.match(/^TT-\d{4}-\d{2}-\d{2}/)) {
-    return res.status(400).json({ error: 'Invalid sessionId format (expected TT-YYYY-MM-DD)' });
-  }
-
-  if (!Array.isArray(urls)) {
-    return res.status(400).json({ error: 'URLs must be provided as an array' });
+    return res.status(400).json({ error: "Invalid sessionId format (expected TT-YYYY-MM-DD)" });
   }
 
   try {
+    // Pull URLs from R2 bucket based on sessionId
+    const urls = await getURLsBySessionId(sessionId);
+    
+    if (!urls || urls.length === 0) {
+      return res.status(404).json({ 
+        error: "No URLs found for the provided sessionId",
+        sessionId 
+      });
+    }
+
     const result = await processURLsToMergedTTS(
       urls,
       sessionId,
@@ -145,13 +160,14 @@ app.post('/process', apiLimiter, async (req, res) => {
         bytesApprox: 0
       })) || [],
       mergedUrl: result.mergedUrl,
+      urlsFound: urls.length,
       processingTimeMs: Date.now() - startTime
     });
   } catch (error) {
-    logger.error('TTS processing failed', error);
+    logger.error("TTS processing failed", error);
     return res.status(500).json({
-      error: 'TTS processing failed',
-      details: process.env.NODE_ENV !== 'production' ? error.message : undefined
+      error: "TTS processing failed",
+      details: process.env.NODE_ENV !== "production" ? error.message : undefined
     });
   }
 });
