@@ -1,7 +1,7 @@
 import { generateTTS } from './googleTTS.js';
 import { r2merged } from './r2merged.js';
 import { extractTextFromUrls } from './extractText.js';
-import { makeUKSSML, chunkTextToSSML } from './ssmlTools.js';
+import { chunkTextToSSML } from './ssmlTools.js';
 import logger from './logger.js';
 
 const MAX_CONCURRENCY = parseInt(process.env.MAX_CONCURRENCY) || 3;
