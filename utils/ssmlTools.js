@@ -18,7 +18,7 @@ export function makeUKSSML(text, strict = true) {
 
   // First convert special terms
   let processed = text.replace(
-    new RegExp(Object.keys(UK_PHONETICS).join('|'), 'gi'), 
+    new RegExp(Object.keys(UK_PHONETICS).join('|'), 'gi'),
     match => `<sub alias="${UK_PHONETICS[match.toUpperCase()]}">${match}</sub>`
   );
 
@@ -42,8 +42,8 @@ export function makeUKSSML(text, strict = true) {
 
   const ssml = `<speak>
     <prosody 
-      rate="${process.env.DEFAULT_SPEAKING_RATE || 1.15}" 
-      pitch="${process.env.DEFAULT_PITCH || '-3.0'}st"
+      rate="${process.env.DEFAULT_SPEAKING_RATE || 1.25}" 
+      pitch="${process.env.DEFAULT_PITCH || '-2.0'}st"
       volume="${process.env.DEFAULT_VOLUME || '+1.5dB'}"
     >
       ${processed}
@@ -61,7 +61,7 @@ export function makeUKSSML(text, strict = true) {
 // Improved chunker by byte length, including SSML wrapping
 export function chunkTextToSSML(text, maxBytes = 4000, overlap = 50) {
   if (!text?.trim()) return [];
-  
+
   const segments = [];
   let currentChunk = '';
   const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
@@ -72,7 +72,6 @@ export function chunkTextToSSML(text, maxBytes = 4000, overlap = 50) {
     if (byteLength(ssmlTest) > maxBytes) {
       if (currentChunk) {
         segments.push(makeUKSSML(currentChunk));
-        // Start new chunk, include overlap
         currentChunk = currentChunk.slice(-overlap) + sentence;
       } else {
         // Single sentence too long: split by words
