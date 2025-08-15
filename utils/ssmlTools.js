@@ -8,6 +8,11 @@ const UK_PHONETICS = {
   'HTTP': 'H T T P'
 };
 
+// Utility: get byte length of a string
+function byteLength(str) {
+  return Buffer.byteLength(str, 'utf8');
+}
+
 export function makeUKSSML(text, strict = true) {
   if (!text?.trim()) return '<speak></speak>';
 
@@ -53,27 +58,44 @@ export function makeUKSSML(text, strict = true) {
   return ssml;
 }
 
-export function chunkTextToSSML(text, maxLength = 3500, overlap = 50) {
+// Improved chunker by byte length, including SSML wrapping
+export function chunkTextToSSML(text, maxBytes = 4000, overlap = 50) {
   if (!text?.trim()) return [];
   
   const segments = [];
   let currentChunk = '';
   const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
-  
+
   for (const sentence of sentences) {
-    if (currentChunk.length + sentence.length > maxLength) {
+    let testChunk = currentChunk + sentence;
+    let ssmlTest = makeUKSSML(testChunk);
+    if (byteLength(ssmlTest) > maxBytes) {
       if (currentChunk) {
         segments.push(makeUKSSML(currentChunk));
+        // Start new chunk, include overlap
         currentChunk = currentChunk.slice(-overlap) + sentence;
       } else {
-        currentChunk = sentence;
+        // Single sentence too long: split by words
+        let words = sentence.split(' ');
+        let subChunk = '';
+        for (let word of words) {
+          let testSub = subChunk + word + ' ';
+          let ssmlSubTest = makeUKSSML(testSub.trim());
+          if (byteLength(ssmlSubTest) > maxBytes) {
+            if (subChunk.trim()) segments.push(makeUKSSML(subChunk.trim()));
+            subChunk = word + ' ';
+          } else {
+            subChunk += word + ' ';
+          }
+        }
+        if (subChunk.trim()) currentChunk = subChunk.trim();
+        else currentChunk = '';
       }
     } else {
       currentChunk += sentence;
     }
   }
-  
-  if (currentChunk) segments.push(makeUKSSML(currentChunk));
+  if (currentChunk.trim()) segments.push(makeUKSSML(currentChunk.trim()));
   return segments;
 }
 
