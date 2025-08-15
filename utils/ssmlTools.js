@@ -53,7 +53,7 @@ export function makeUKSSML(text, strict = true) {
   return ssml;
 }
 
-export function chunkTextToSSML(text, maxLength = 4500, overlap = 50) {
+export function chunkTextToSSML(text, maxLength = 3500, overlap = 50) {
   if (!text?.trim()) return [];
   
   const segments = [];
