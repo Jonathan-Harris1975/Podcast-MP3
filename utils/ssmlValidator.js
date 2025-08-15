@@ -17,7 +17,7 @@ const FORBIDDEN_TAGS = [
 
 // Maximum recommended values for prosody
 const PROSODY_LIMITS = {
-  rate: { min: 20, max: 200 }, // percentage
+  rate: { min: 60, max: 200 }, // percentage
   pitch: { min: -12, max: +12 }, // semitones
   volume: { min: -6, max: +6 } // decibels
 };
