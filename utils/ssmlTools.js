@@ -5,19 +5,25 @@ const DEFAULT_MAX_CHUNK_BYTES = 4000;
 
 // Basic SSML wrapper function - fallback if generateDynamicSSML fails
 function convertToSSML(text) {
-  // Basic SSML structure with UK voice settings
-  const voice = process.env.DEFAULT_VOICE || 'en-GB-Wavenet-B';
-  const rate = process.env.DEFAULT_SPEAKING_RATE || '1.25';
-  const pitch = process.env.DEFAULT_PITCH || '-2.0st';
-  const volume = process.env.DEFAULT_VOLUME || '+1.5dB';
-
-  // Clean text and add basic formatting
+  // Clean text first
   const cleanText = text
     .replace(/\s+/g, ' ')
     .trim()
+    // Escape XML special characters
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
     // Add pauses after punctuation
     .replace(/([.!?])\s+/g, '$1<break time="500ms"/> ')
     .replace(/([,;:])\s+/g, '$1<break time="300ms"/> ');
+
+  // Basic SSML structure with UK voice settings
+  const voice = process.env.DEFAULT_VOICE || 'en-GB-Wavenet-D';
+  const rate = process.env.DEFAULT_SPEAKING_RATE || '1.25';
+  const pitch = process.env.DEFAULT_PITCH || '-2.0st';
+  const volume = process.env.DEFAULT_VOLUME || '+1.5dB';
 
   return `<speak>
     <voice name="${voice}">
@@ -30,13 +36,40 @@ function convertToSSML(text) {
 
 // Basic formatting function as fallback
 function editAndFormat(chunk) {
-  // Simple formatting - you can enhance this based on your needs
-  return chunk
+  // Clean and prepare text
+  let cleanText = chunk
     .replace(/\s+/g, ' ')
     .trim()
-    // Ensure proper SSML structure
-    .replace(/^(?!<speak>)/, '<speak>')
-    .replace(/(?!<\/speak>)$/, '</speak>');
+    // Escape XML special characters
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+  
+  // If already wrapped in <speak>, return as-is
+  if (cleanText.startsWith('<speak>') && cleanText.endsWith('</speak>')) {
+    return cleanText;
+  }
+  
+  // If it looks like it has SSML tags but no speak wrapper, add it
+  if (cleanText.includes('<') && cleanText.includes('>')) {
+    return `<speak>${cleanText}</speak>`;
+  }
+  
+  // For plain text, create proper SSML with voice settings
+  const voice = process.env.DEFAULT_VOICE || 'en-GB-Wavenet-D';
+  const rate = process.env.DEFAULT_SPEAKING_RATE || '1.25';
+  const pitch = process.env.DEFAULT_PITCH || '-2.0st';
+  const volume = process.env.DEFAULT_VOLUME || '+1.5dB';
+  
+  return `<speak>
+    <voice name="${voice}">
+      <prosody rate="${rate}" pitch="${pitch}" volume="${volume}">
+        ${cleanText}
+      </prosody>
+    </voice>
+  </speak>`;
 }
 
 export async function chunkTextToSSML(text, maxChunkBytes = DEFAULT_MAX_CHUNK_BYTES) {
