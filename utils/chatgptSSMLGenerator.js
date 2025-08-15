@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { validateSSML } from './ssmlValidator.js';
-import { makeUKSSML, chunkTextToSSML } from './ssmlTools.js';
+import { chunkTextToSSML } from './ssmlTools.js'; // Removed makeUKSSML import
 import logger from './logger.js';
 
 const GPT_MODEL = process.env.OPENAI_MODEL || 'gpt-4';
