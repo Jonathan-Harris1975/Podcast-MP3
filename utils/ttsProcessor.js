@@ -53,7 +53,7 @@ export async function processURLsToMergedTTS(urls, sessionId, options = {}) {
 
     const ssmlChunks = process.env.SSML_ENABLED === 'true'
       ? chunkTextToSSML(text, MAX_SSML_CHUNK_BYTES)
-      ;
+      
 
     for (const [index, chunk] of ssmlChunks.entries()) {
       // Final safety check
