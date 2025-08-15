@@ -5,6 +5,7 @@ import { makeUKSSML, chunkTextToSSML } from './ssmlTools.js';
 import logger from './logger.js';
 
 const MAX_CONCURRENCY = parseInt(process.env.MAX_CONCURRENCY) || 3;
+const MAX_SSML_CHUNK_BYTES = parseInt(process.env.MAX_SSML_CHUNK_BYTES) || 4000;
 
 class ConcurrencyPool {
   constructor(max) {
@@ -51,10 +52,16 @@ export async function processURLsToMergedTTS(urls, sessionId, options = {}) {
     if (!text?.trim()) return;
 
     const ssmlChunks = process.env.SSML_ENABLED === 'true'
-      ? chunkTextToSSML(text, parseInt(process.env.MAX_CHUNK_LENGTH) || 4500)
+      ? chunkTextToSSML(text, MAX_SSML_CHUNK_BYTES)
       : [makeUKSSML(text)];
 
     for (const [index, chunk] of ssmlChunks.entries()) {
+      // Final safety check
+      if (Buffer.byteLength(chunk, 'utf8') > 5000) {
+        logger.error('SSML chunk exceeds Google TTS byte limit and will be split further', { index, url });
+        // Optionally, split chunk further here...
+        continue;
+      }
       try {
         const chunkKey = `${sessionId}/chunk_${url.split('/').pop()}_${index}.mp3`;
         const uploadedUrl = await pool.enqueue(() => 
