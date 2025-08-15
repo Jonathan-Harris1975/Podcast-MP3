@@ -15,19 +15,19 @@ function convertToSSML(text) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;')
-    // Add pauses after punctuation
-    .replace(/([.!?])\s+/g, '$1<break time="500ms"/> ')
+    // Add pauses after punctuation using environment variable
+    .replace(/([.!?])\s+/g, `$1<break time="${process.env.SSML_BREAK_MS || 420}ms"/> `)
     .replace(/([,;:])\s+/g, '$1<break time="300ms"/> ');
 
-  // Basic SSML structure with UK voice settings
+  // Use environment variables for voice settings
   const voice = process.env.DEFAULT_VOICE || 'en-GB-Wavenet-D';
-  const rate = process.env.DEFAULT_SPEAKING_RATE || '1.25';
-  const pitch = process.env.DEFAULT_PITCH || '-2.0st';
+  const rate = process.env.DEFAULT_SPEAKING_RATE || '1.15';
+  const pitch = process.env.DEFAULT_PITCH || '-3.0';
   const volume = process.env.DEFAULT_VOLUME || '+1.5dB';
 
   return `<speak>
     <voice name="${voice}">
-      <prosody rate="${rate}" pitch="${pitch}" volume="${volume}">
+      <prosody rate="${rate}" pitch="${pitch}st" volume="${volume}">
         ${cleanText}
       </prosody>
     </voice>
