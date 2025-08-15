@@ -1,7 +1,7 @@
 import { generateTTS } from './googleTTS.js';
 import { r2merged } from './r2merged.js';
 import { extractTextFromUrls } from './extractText.js';
-import { chunkTextToSSML } from './ssmlTools.js';
+import { chunkTextToSSML, convertToSSML } from './ssmlTools.js';
 import logger from './logger.js';
 
 const MAX_CONCURRENCY = parseInt(process.env.MAX_CONCURRENCY) || 3;
@@ -51,17 +51,49 @@ export async function processURLsToMergedTTS(urls, sessionId, options = {}) {
   await Promise.all(extractedTexts.map(async ({ url, text }) => {
     if (!text?.trim()) return;
 
-    const ssmlChunks = process.env.SSML_ENABLED === 'true'
-      ? chunkTextToSSML(text, MAX_SSML_CHUNK_BYTES)
-      : [text]; // Fixed: Added missing closing and fallback
+    let ssmlChunks;
+    if (process.env.SSML_ENABLED === 'true') {
+      try {
+        ssmlChunks = await chunkTextToSSML(text, MAX_SSML_CHUNK_BYTES);
+        logger.info('Generated SSML chunks', { 
+          url, 
+          chunkCount: ssmlChunks.length,
+          firstChunkSample: ssmlChunks[0]?.substring(0, 150)
+        });
+      } catch (error) {
+        logger.warn('SSML generation failed, falling back to basic conversion', { url, error: error.message });
+        ssmlChunks = [convertToSSML(text)];
+      }
+    } else {
+      // Even if SSML is disabled, we still need basic SSML wrapping for Google TTS
+      logger.info('SSML disabled, using basic conversion', { url });
+      ssmlChunks = [convertToSSML(text)];
+    }
+
+    // Validate all chunks have proper SSML format
+    ssmlChunks = ssmlChunks.map((chunk, idx) => {
+      if (!chunk.includes('<speak>')) {
+        logger.warn('Chunk missing SSML wrapper, fixing', { url, chunkIndex: idx });
+        return convertToSSML(chunk);
+      }
+      return chunk;
+    });
 
     for (const [index, chunk] of ssmlChunks.entries()) {
       // Final safety check
       if (Buffer.byteLength(chunk, 'utf8') > 5000) {
         logger.error('SSML chunk exceeds Google TTS byte limit and will be split further', { index, url });
-        // Optionally, split chunk further here...
         continue;
       }
+      
+      // Log what we're sending to TTS
+      logger.info('Sending chunk to TTS', {
+        url,
+        chunkIndex: index,
+        isSSML: chunk.includes('<speak>'),
+        chunkSample: chunk.substring(0, 200)
+      });
+      
       try {
         const chunkKey = `${sessionId}/chunk_${url.split('/').pop()}_${index}.mp3`;
         const uploadedUrl = await pool.enqueue(() => 
@@ -70,7 +102,7 @@ export async function processURLsToMergedTTS(urls, sessionId, options = {}) {
         );
         chunkUrls.push(uploadedUrl);
       } catch (error) {
-        logger.error(`Chunk processing failed`, { url, chunkIndex: index, error });
+        logger.error(`Chunk processing failed`, { url, chunkIndex: index, error: error.message });
       }
     }
   }));
@@ -133,4 +165,4 @@ async function mergeAndUploadChunks(chunkUrls, sessionId) {
     logger.error('Failed to merge audio chunks', { sessionId, error });
     throw error;
   }
-      }
+          }
