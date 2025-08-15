@@ -53,7 +53,7 @@ export async function processURLsToMergedTTS(urls, sessionId, options = {}) {
 
     const ssmlChunks = process.env.SSML_ENABLED === 'true'
       ? chunkTextToSSML(text, MAX_SSML_CHUNK_BYTES)
-      
+      : [text]; // Fixed: Added missing closing and fallback
 
     for (const [index, chunk] of ssmlChunks.entries()) {
       // Final safety check
@@ -85,5 +85,52 @@ export async function processURLsToMergedTTS(urls, sessionId, options = {}) {
 }
 
 async function mergeAndUploadChunks(chunkUrls, sessionId) {
-  // Implementation remains same as before
-}
+  try {
+    logger.info('Starting merge process for chunks', { 
+      sessionId, 
+      chunkCount: chunkUrls.length 
+    });
+
+    // Download all audio chunks
+    const audioBuffers = await Promise.all(
+      chunkUrls.map(async (url, index) => {
+        try {
+          const response = await fetch(url);
+          if (!response.ok) {
+            throw new Error(`Failed to download chunk ${index}: ${response.statusText}`);
+          }
+          return await response.arrayBuffer();
+        } catch (error) {
+          logger.error(`Error downloading chunk ${index}`, { url, error });
+          throw error;
+        }
+      })
+    );
+
+    // Simple concatenation for MP3 files
+    // Note: This is a basic approach. For production, consider using ffmpeg
+    const totalLength = audioBuffers.reduce((sum, buffer) => sum + buffer.byteLength, 0);
+    const mergedBuffer = new Uint8Array(totalLength);
+    
+    let offset = 0;
+    audioBuffers.forEach(buffer => {
+      mergedBuffer.set(new Uint8Array(buffer), offset);
+      offset += buffer.byteLength;
+    });
+
+    // Upload merged file
+    const mergedKey = `${sessionId}/merged_audio.mp3`;
+    const mergedUrl = await r2merged(mergedKey, mergedBuffer.buffer);
+
+    logger.info('Successfully merged and uploaded audio', { 
+      sessionId, 
+      mergedUrl,
+      totalSize: totalLength 
+    });
+
+    return mergedUrl;
+  } catch (error) {
+    logger.error('Failed to merge audio chunks', { sessionId, error });
+    throw error;
+  }
+      }
