@@ -17,8 +17,8 @@ export async function generateTTS(ssml, chunkIndex = 0) {
 
   const audioConfig = {
     audioEncoding: 'MP3',
-    speakingRate: parseFloat(process.env.DEFAULT_SPEAKING_RATE || 1.15),
-    pitch: parseFloat(process.env.DEFAULT_PITCH || -3.0),
+    speakingRate: parseFloat(process.env.DEFAULT_SPEAKING_RATE || 1.25),
+    pitch: parseFloat(process.env.DEFAULT_PITCH || -2.0),
     volumeGainDb: parseFloat(process.env.DEFAULT_VOLUME || 1.5),
     effectsProfileId: [process.env.VOICE_EFFECTS || 'studio']
   };
@@ -32,12 +32,13 @@ export async function generateTTS(ssml, chunkIndex = 0) {
 
     return await applyVoiceEnhancements(response.audioContent, chunkIndex);
   } catch (error) {
-    logger.error('TTS synthesis failed', { 
-      error, 
+    logger.error('TTS synthesis failed', {
+      error,
       voiceConfig,
       chunkIndex,
-      ssmlSample: ssml.substring(0, 100) 
+      ssmlSample: ssml.substring(0, 100)
     });
+    // Do not retry here; let upstream code re-chunk and retry if needed
     throw error;
   }
 }
