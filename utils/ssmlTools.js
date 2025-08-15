@@ -1,49 +1,37 @@
-export function chunkTextToSSML(text, maxBytes = 3900, overlap = 50) {
-  if (!text?.trim()) return [];
-  const segments = [];
-  let currentChunk = '';
+import { convertToSSML } from './chatgptSSMLGenerator.js';
+import { editAndFormat } from './audioEffects.js';
 
-  // Split into sentences for safe chunking
-  const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+const DEFAULT_MAX_CHUNK_BYTES = 4000;
+
+export function chunkTextToSSML(text, maxChunkBytes = DEFAULT_MAX_CHUNK_BYTES) {
+  const ssml = convertToSSML(text);
+  const chunks = [];
+  let currentChunk = '';
+  let currentChunkBytes = 0;
+
+  const sentences = ssml.match(/[^.!?\n]+[.!?\n]+/g) || [ssml];
 
   for (const sentence of sentences) {
-    let testChunk = (currentChunk + sentence).trim();
-    // Wrap each chunk as a full SSML doc for test
-    let ssmlTest = `<speak><prosody rate="${process.env.DEFAULT_SPEAKING_RATE || 1.25}" pitch="${process.env.DEFAULT_PITCH || '-2.0'}st" volume="${process.env.DEFAULT_VOLUME || '+1.5dB'}">${testChunk}</prosody></speak>`;
-    if (Buffer.byteLength(ssmlTest, 'utf8') > maxBytes) {
-      if (currentChunk.trim().length > 0) {
-        // Only push if it's non-empty
-        segments.push(`<speak><prosody rate="${process.env.DEFAULT_SPEAKING_RATE || 1.25}" pitch="${process.env.DEFAULT_PITCH || '-2.0'}st" volume="${process.env.DEFAULT_VOLUME || '+1.5dB'}">${currentChunk.trim()}</prosody></speak>`);
-        currentChunk = sentence;
-      } else {
-        // Sentence itself is too big, split by words
-        let words = sentence.split(' ');
-        let subChunk = '';
-        for (let word of words) {
-          let testSub = (subChunk + word).trim();
-          let ssmlSubTest = `<speak><prosody rate="${process.env.DEFAULT_SPEAKING_RATE || 1.25}" pitch="${process.env.DEFAULT_PITCH || '-2.0'}st" volume="${process.env.DEFAULT_VOLUME || '+1.5dB'}">${testSub}</prosody></speak>`;
-          if (Buffer.byteLength(ssmlSubTest, 'utf8') > maxBytes) {
-            if (subChunk.trim().length > 0) {
-              segments.push(`<speak><prosody rate="${process.env.DEFAULT_SPEAKING_RATE || 1.25}" pitch="${process.env.DEFAULT_PITCH || '-2.0'}st" volume="${process.env.DEFAULT_VOLUME || '+1.5dB'}">${subChunk.trim()}</prosody></speak>`);
-              subChunk = word;
-            } else {
-              subChunk = word;
-            }
-          } else {
-            subChunk += ' ' + word;
-          }
-        }
-        if (subChunk.trim().length > 0) {
-          segments.push(`<speak><prosody rate="${process.env.DEFAULT_SPEAKING_RATE || 1.25}" pitch="${process.env.DEFAULT_PITCH || '-2.0'}st" volume="${process.env.DEFAULT_VOLUME || '+1.5dB'}">${subChunk.trim()}</prosody></speak>`);
-        }
-        currentChunk = '';
-      }
-    } else {
+    const sentenceBytes = Buffer.byteLength(sentence, 'utf8');
+
+    if (currentChunkBytes + sentenceBytes <= maxChunkBytes) {
       currentChunk += sentence;
+      currentChunkBytes += sentenceBytes;
+    } else {
+      if (currentChunk.length > 0) {
+        chunks.push(currentChunk);
+      }
+      currentChunk = sentence;
+      currentChunkBytes = sentenceBytes;
     }
   }
-  if (currentChunk.trim().length > 0) {
-    segments.push(`<speak><prosody rate="${process.env.DEFAULT_SPEAKING_RATE || 1.25}" pitch="${process.env.DEFAULT_PITCH || '-2.0'}st" volume="${process.env.DEFAULT_VOLUME || '+1.5dB'}">${currentChunk.trim()}</prosody></speak>`);
+
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk);
   }
-  return segments;
+
+  // Apply editAndFormat only to main chunks, not intro/outro
+  const processedChunks = chunks.map(chunk => editAndFormat(chunk));
+
+  return processedChunks;
 }
