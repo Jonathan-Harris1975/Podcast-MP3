@@ -1,4 +1,5 @@
 import { generateDynamicSSML } from './chatgptSSMLGenerator.js';
+// Note: audioEffects.js only has applyVoiceEnhancements, not editAndFormat
 
 const DEFAULT_MAX_CHUNK_BYTES = 4000;
 
