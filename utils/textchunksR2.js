@@ -12,7 +12,7 @@ const r2Client = new S3Client({
 });
 
 export async function getURLsBySessionId(sessionId) {
-  const bucket = process.env.R2_BUCKET_CHUNKS;
+  const bucket = process.env.R2_BUCKET_CHUNKS_T;
   const publicBase = process.env.R2_PUBLIC_BASE_URL_1;
 
   if (!bucket) {
