@@ -8,8 +8,8 @@ const GPT_TEMPERATURE = parseFloat(process.env.GPT_TEMPERATURE) || 0.5;
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
 
 const MAX_SSML_BYTES = parseInt(process.env.MAX_SSML_CHUNK_BYTES) || 4000;
-const SAFE_PROSODY_RATE = process.env.DEFAULT_SPEAKING_RATE || 1.25;
-const SAFE_PITCH = process.env.DEFAULT_PITCH || '-2.0';
+const SAFE_PROSODY_RATE = process.env.DEFAULT_SPEAKING_RATE || '1.15';
+const SAFE_PITCH = process.env.DEFAULT_PITCH || '-3.0';
 const SAFE_VOLUME = process.env.DEFAULT_VOLUME || '+1.5dB';
 
 function byteLength(str) {
@@ -17,9 +17,10 @@ function byteLength(str) {
 }
 
 function autoBreaks(ssml, minLen = 250) {
-  // Insert <break> tags after long sentences, paragraphs
+  // Insert <break> tags after long sentences, paragraphs using environment variable
+  const breakTime = process.env.SSML_BREAK_MS || '420';
   return ssml.replace(/([.!?])(\s+)/g, (m, punc, space) => {
-    return punc + '<break time="500ms"/>' + space;
+    return punc + `<break time="${breakTime}ms"/>` + space;
   });
 }
 
@@ -83,7 +84,7 @@ Special Requirements:
 
     // Ensure prosody is safe
     ssmlOutput = ssmlOutput.replace(
-      /<prosody([^>]*)>/,
+      /<prosody([^>]*)>/g,
       `<prosody rate="${speakingRate}" pitch="${pitch}st" volume="${SAFE_VOLUME}">`
     );
 
