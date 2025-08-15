@@ -1,5 +1,4 @@
 import { generateDynamicSSML } from './chatgptSSMLGenerator.js';
-import { editAndFormat } from './audioEffects.js';
 
 const DEFAULT_MAX_CHUNK_BYTES = 4000;
 
@@ -26,6 +25,17 @@ function convertToSSML(text) {
       </prosody>
     </voice>
   </speak>`;
+}
+
+// Basic formatting function as fallback
+function editAndFormat(chunk) {
+  // Simple formatting - you can enhance this based on your needs
+  return chunk
+    .replace(/\s+/g, ' ')
+    .trim()
+    // Ensure proper SSML structure
+    .replace(/^(?!<speak>)/, '<speak>')
+    .replace(/(?!<\/speak>)$/, '</speak>');
 }
 
 export async function chunkTextToSSML(text, maxChunkBytes = DEFAULT_MAX_CHUNK_BYTES) {
