@@ -1,4 +1,4 @@
-1export function chunkTextToSSML(text, maxBytes = 4000, overlap = 50) {
+export function chunkTextToSSML(text, maxBytes = 3900, overlap = 50) {
   if (!text?.trim()) return [];
   const segments = [];
   let currentChunk = '';
