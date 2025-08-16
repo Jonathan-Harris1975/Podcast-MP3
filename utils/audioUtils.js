@@ -5,6 +5,51 @@
  */
 
 /**
+ * Merge multiple audio files into a single file
+ * Note: This is a placeholder implementation. For production use, 
+ * you would need a proper audio library like ffmpeg or similar.
+ * @param {Buffer[]} audioBuffers - Array of audio buffers to merge
+ * @param {string} encoding - Audio encoding format
+ * @returns {Promise<Buffer>} - Merged audio buffer
+ */
+export async function mergeAudioFiles(audioBuffers, encoding = 'MP3') {
+    if (!audioBuffers || !Array.isArray(audioBuffers) || audioBuffers.length === 0) {
+        return Buffer.alloc(0);
+    }
+    
+    // For single buffer, return as-is
+    if (audioBuffers.length === 1) {
+        return audioBuffers[0];
+    }
+    
+    try {
+        // Calculate total length
+        const totalLength = audioBuffers.reduce((sum, buffer) => {
+            return sum + (Buffer.isBuffer(buffer) ? buffer.length : 0);
+        }, 0);
+        
+        // Create merged buffer
+        const mergedBuffer = Buffer.alloc(totalLength);
+        let offset = 0;
+        
+        // Copy all buffers into the merged buffer
+        for (const buffer of audioBuffers) {
+            if (Buffer.isBuffer(buffer) && buffer.length > 0) {
+                buffer.copy(mergedBuffer, offset);
+                offset += buffer.length;
+            }
+        }
+        
+        return mergedBuffer;
+    } catch (error) {
+        console.warn('Error merging audio files:', error);
+        // Return the first valid buffer as fallback
+        const firstValidBuffer = audioBuffers.find(buffer => Buffer.isBuffer(buffer) && buffer.length > 0);
+        return firstValidBuffer || Buffer.alloc(0);
+    }
+}
+
+/**
  * Calculate approximate audio duration based on text length and speaking rate
  * @param {string} text - Input text
  * @param {number} speakingRate - Speaking rate (0.25 to 4.0, default 1.0)
@@ -203,8 +248,44 @@ export function getMimeType(encoding) {
     }
 }
 
-// Default export
+/**
+ * Process audio chunks for TTS service
+ * @param {Buffer[]} audioChunks - Array of audio chunk buffers
+ * @param {Object} options - Processing options
+ * @returns {Promise<Object>} - Processed audio result
+ */
+export async function processAudioChunks(audioChunks, options = {}) {
+    const { merge = false, encoding = 'MP3' } = options;
+    
+    if (!audioChunks || !Array.isArray(audioChunks)) {
+        return { chunks: [], merged: null, totalSize: 0 };
+    }
+    
+    const processedChunks = audioChunks.map((chunk, index) => ({
+        index,
+        buffer: chunk,
+        size: Buffer.isBuffer(chunk) ? chunk.length : 0,
+        base64: bufferToBase64(chunk)
+    }));
+    
+    const totalSize = processedChunks.reduce((sum, chunk) => sum + chunk.size, 0);
+    
+    let merged = null;
+    if (merge && audioChunks.length > 1) {
+        merged = await mergeAudioFiles(audioChunks, encoding);
+    }
+    
+    return {
+        chunks: processedChunks,
+        merged,
+        totalSize,
+        count: audioChunks.length
+    };
+}
+
+// Default export with all functions
 export default {
+    mergeAudioFiles,
     estimateAudioDuration,
     estimateAudioSize,
     generateAudioFilename,
@@ -212,5 +293,6 @@ export default {
     validateAudioConfig,
     createDefaultAudioConfig,
     bufferToBase64,
-    getMimeType
+    getMimeType,
+    processAudioChunks
 };
