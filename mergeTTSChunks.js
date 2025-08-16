@@ -1,51 +1,60 @@
 // mergeTTSChunks.js
-import { exec } from 'child_process';
-import { promises as fs } from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import util from 'util';
-import logger from './logger.js';
-import { uploadToR2Merged } from './r2merged.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const execPromise = util.promisify(exec);
+import { spawn } from "child_process";
+import path from "path";
+import os from "os";
+import { promises as fs } from "fs";
+import { uploadMergedToR2 } from "./utils/r2merged.js";
+import logger from "./utils/logger.js";
 
 /**
- * Merge TTS chunk files into a single MP3 and upload to R2 merged bucket
- * @param {string[]} chunkFiles - Array of local file paths to merge
- * @param {string} sessionId - Unique session identifier
+ * Merge chunk MP3 files into one MP3 and upload to R2 (merged bucket).
+ *
+ * @param {string[]} chunkFiles - Local file paths of chunk mp3s in correct order
+ * @param {string} sessionId - Session identifier
+ * @returns {Promise<string>} - Public URL of merged file in R2
  */
-export default async function mergeTTSChunks(chunkFiles = [], sessionId = 'session') {
-  if (!Array.isArray(chunkFiles) || chunkFiles.length === 0) {
-    throw new Error('No chunk files provided to mergeTTSChunks');
+export default async function mergeTTSChunks(chunkFiles, sessionId) {
+  if (!chunkFiles || chunkFiles.length === 0) {
+    throw new Error("No chunk files provided to merge");
   }
 
-  const outputFile = path.join(__dirname, `${sessionId}_merged_${Date.now()}.mp3`);
-  const fileList = path.join(__dirname, `${sessionId}_filelist.txt`);
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `merge-${sessionId}-`));
+  const listFile = path.join(tmpDir, "inputs.txt");
 
+  // ffmpeg concat requires a list file
+  const content = chunkFiles.map(f => `file '${f}'`).join("\n");
+  await fs.writeFile(listFile, content);
+
+  const mergedPath = path.join(tmpDir, "merged.mp3");
+
+  await new Promise((resolve, reject) => {
+    const ffmpeg = spawn("ffmpeg", [
+      "-y",
+      "-f", "concat",
+      "-safe", "0",
+      "-i", listFile,
+      "-c", "copy",
+      mergedPath,
+    ]);
+
+    ffmpeg.on("error", reject);
+    ffmpeg.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`ffmpeg exited with code ${code}`));
+    });
+  });
+
+  const mergedBuf = await fs.readFile(mergedPath);
+  const key = `${sessionId}/merged.mp3`;
+  const mergedUrl = await uploadMergedToR2(key, mergedBuf, "audio/mpeg");
+
+  // cleanup
   try {
-    // Create a list file for ffmpeg concat
-    const listContent = chunkFiles.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n');
-    await fs.writeFile(fileList, listContent, 'utf8');
+    await fs.unlink(listFile).catch(() => {});
+    await fs.unlink(mergedPath).catch(() => {});
+    await fs.rmdir(tmpDir).catch(() => {});
+  } catch {}
 
-    // Merge with ffmpeg (concat demuxer)
-    const cmd = `ffmpeg -y -f concat -safe 0 -i "${fileList}" -c copy "${outputFile}"`;
-    logger.info('Merging audio with command:', cmd);
-    await execPromise(cmd);
-
-    // Upload merged file
-    const data = await fs.readFile(outputFile);
-    const key = `${sessionId}/merged_${Date.now()}.mp3`;
-    const mergedUrl = await uploadToR2Merged(key, data);
-
-    logger.info(`Audio merged successfully: ${mergedUrl}`);
-    return mergedUrl;
-  } catch (error) {
-    logger.error('Audio merge failed:', error);
-    throw new Error(`Audio processing failed: ${error.message}`);
-  } finally {
-    // Best-effort cleanup
-    try { await fs.unlink(fileList).catch(()=>{}); } catch(e){}
-    try { await fs.unlink(outputFile).catch(()=>{}); } catch(e){}
-  }
+  logger.info("Merged chunks uploaded", { sessionId, mergedUrl });
+  return mergedUrl;
 }
