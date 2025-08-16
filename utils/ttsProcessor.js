@@ -1,4 +1,4 @@
-import { TextToSpeechClient } from '@google-cloud/text-to-speech';
+import { TextToSpeechClient } from './googleTTS.js';
 import { processTextFromURLs } from './textProcessor.js';
 import { mergeAudioFiles } from './audioUtils.js';
 import { uploadToR2, uploadMultipleToR2 } from './r2.js';
