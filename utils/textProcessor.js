@@ -159,7 +159,7 @@ export function validateText(text) {
     return text && 
            typeof text === 'string' && 
            text.trim().length > 0 && 
-           text.trim().length <= 5000; // Reasonable limit for TTS
+           text.trim().length <= 3500; // Reasonable limit for TTS
 }
 
 // Default export
