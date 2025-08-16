@@ -13,7 +13,7 @@ const client = new textToSpeech.TextToSpeechClient();
 export async function synthesizeAndSave(text, outputPath) {
   const request = {
     input: { text },
-    voice: { languageCode: "en-GB", ssmlGender: "NEUTRAL" },
+    voice: { languageCode: "en-GB", ssmlGender: "MALE" },
     audioConfig: { audioEncoding: "MP3" },
   };
 
