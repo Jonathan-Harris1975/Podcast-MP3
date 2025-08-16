@@ -1,190 +1,123 @@
 // routes/tts.js
 import express from "express";
-import fetch from "node-fetch";
-import pLimit from "p-limit";
-import textToSpeech from "@google-cloud/text-to-speech";
-import { spawn } from "child_process";
-import ffmpegPath from "ffmpeg-static";
 import os from "os";
-import fs from "fs/promises";
 import path from "path";
+import { promises as fs } from "fs";
+import { TextToSpeechClient } from "@google-cloud/text-to-speech";
+import pLimit from "p-limit";
 
-import { uploadToR2, getPodcastAudio } from "../utils/r2.js";
+import { uploadToR2 } from "../utils/r2.js";
+import mergeTTSChunks from "../mergeTTSChunks.js";
+import logger from "../utils/logger.js";
+import { loadScriptForSession } from "../utils/sessionStore.js"; // new util
 
 const router = express.Router();
+const ttsClient = new TextToSpeechClient();
+const limit = pLimit(3);
 
-// ----------------------
-// Google TTS setup
-// ----------------------
-const googleCreds = JSON.parse(process.env.GOOGLE_KEY || "{}");
-const ttsClient = new textToSpeech.TextToSpeechClient({
-  projectId: googleCreds.project_id,
-  credentials: {
-    client_email: googleCreds.client_email,
-    private_key: googleCreds.private_key,
-  },
-});
-
-// ----------------------
-// Job store (in-memory)
-// ----------------------
-const jobs = new Map();
-
-// ----------------------
-// Config
-// ----------------------
-const FETCH_TIMEOUT_MS = +process.env.FETCH_TIMEOUT_MS || 10000;
-const TTS_CONCURRENCY = +process.env.TTS_CONCURRENCY || 3;
-const MAX_CHUNKS = +process.env.MAX_CHUNKS || 500;
-const CHUNKS_BASE_URL = process.env.R2_PUBLIC_BASE_URL_CHUNKS;
-
-// ----------------------
-// Helpers
-// ----------------------
-function fetchWithTimeout(url, ms = FETCH_TIMEOUT_MS) {
-  const ac = new AbortController();
-  const id = setTimeout(() => ac.abort(), ms);
-  return fetch(url, { signal: ac.signal }).finally(() => clearTimeout(id));
-}
-
-async function listChunkTexts(sessionId) {
-  if (!CHUNKS_BASE_URL) {
-    throw new Error("R2_PUBLIC_BASE_URL_CHUNKS not configured");
-  }
-  const chunks = [];
-  for (let i = 1; i <= MAX_CHUNKS; i++) {
-    const url = `${CHUNKS_BASE_URL}/${sessionId}/chunk-${i}.txt`;
-    const resp = await fetchWithTimeout(url);
-    if (!resp.ok) {
-      if (i === 1) throw new Error(`No chunks found for ${sessionId}`);
-      break;
+function splitIntoChunks(text, maxLen = 4500) {
+  const parts = [];
+  let current = "";
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  for (const s of sentences) {
+    if ((current + " " + s).trim().length > maxLen) {
+      if (current) parts.push(current.trim());
+      if (s.length > maxLen) {
+        for (let i = 0; i < s.length; i += maxLen) {
+          parts.push(s.slice(i, i + maxLen));
+        }
+        current = "";
+      } else {
+        current = s;
+      }
+    } else {
+      current = (current ? current + " " : "") + s;
     }
-    const text = (await resp.text()).trim();
-    if (text) chunks.push({ i, text });
   }
-  return chunks;
+  if (current) parts.push(current.trim());
+  return parts;
 }
 
-async function mergeMp3WithFfmpeg(buffers) {
-  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "merge-"));
-  const listPath = path.join(tmp, "list.txt");
+router.post("/", async (req, res) => {
+  const started = Date.now();
+  try {
+    const { sessionId } = req.body || {};
+    if (!sessionId) {
+      return res.status(400).json({ error: "sessionId required" });
+    }
 
-  const files = await Promise.all(
-    buffers.map(async (b, i) => {
-      const p = path.join(tmp, `p${i}.mp3`);
-      await fs.writeFile(p, b);
-      return p;
-    })
-  );
+    // 🔹 Load the script for this sessionId
+    const scriptText = await loadScriptForSession(sessionId);
+    if (!scriptText) {
+      return res.status(404).json({ error: `No script found for session ${sessionId}` });
+    }
 
-  await fs.writeFile(
-    listPath,
-    files.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join("\n")
-  );
+    const pieces = splitIntoChunks(String(scriptText));
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `tts-${sessionId}-`));
 
-  const out = path.join(tmp, "out.mp3");
-  await new Promise((resolve, reject) => {
-    const ff = spawn(ffmpegPath, [
-      "-hide_banner",
-      "-y",
-      "-f",
-      "concat",
-      "-safe",
-      "0",
-      "-i",
-      listPath,
-      "-c",
-      "copy",
-      out,
-    ]);
-    ff.on("error", reject);
-    ff.on("close", (code) =>
-      code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}`))
+    const synthOptions = {
+      languageCode: "en-US",
+      name: "en-US-Neural2-C",
+      ssmlGender: "FEMALE",
+      speakingRate: 1.0,
+      pitch: 0.0,
+    };
+
+    const localFiles = await Promise.all(
+      pieces.map((p, i) =>
+        limit(async () => {
+          const [resp] = await ttsClient.synthesizeSpeech({
+            input: { text: p },
+            voice: {
+              languageCode: synthOptions.languageCode,
+              name: synthOptions.name,
+              ssmlGender: synthOptions.ssmlGender,
+            },
+            audioConfig: {
+              audioEncoding: "MP3",
+              speakingRate: synthOptions.speakingRate,
+              pitch: synthOptions.pitch,
+            },
+          });
+
+          const buf = Buffer.from(resp.audioContent, "base64");
+          const filename = path.join(tmpDir, `${String(i).padStart(3, "0")}.mp3`);
+          await fs.writeFile(filename, buf);
+
+          const key = `${sessionId}/raw-${String(i).padStart(3, "0")}.mp3`;
+          const url = await uploadToR2(key, buf, "audio/mpeg");
+
+          return { index: i, bytes: buf.length, local: filename, url };
+        })
+      )
     );
-  });
 
-  return fs.readFile(out);
-}
+    localFiles.sort((a,b)=>a.index-b.index);
 
-async function synthesizeAllChunks(sessionId) {
-  const job = jobs.get(sessionId);
-  job.status = "running";
-  jobs.set(sessionId, job);
+    const mergedUrl = await mergeTTSChunks(localFiles.map(x=>x.local), sessionId);
 
-  const chunks = await listChunkTexts(sessionId);
-  const limit = pLimit(TTS_CONCURRENCY);
-  const buffers = new Array(chunks.length);
+    const payload = {
+      sessionId,
+      count: localFiles.length,
+      chunks: localFiles.map(({ index, bytes, url }) => ({
+        index,
+        bytesApprox: bytes,
+        url,
+      })),
+      merged: { url: mergedUrl },
+      elapsedMs: Date.now() - started,
+    };
 
-  await Promise.all(
-    chunks.map((c, idx) =>
-      limit(async () => {
-        const [resp] = await ttsClient.synthesizeSpeech(
-          {
-            input: { text: c.text },
-            voice: { languageCode: "en-US", ssmlGender: "NEUTRAL" },
-            audioConfig: { audioEncoding: "MP3" },
-          },
-          { timeout: 30000 }
-        );
-        buffers[idx] = Buffer.from(resp.audioContent, "base64");
-        job.progress = Math.round(((idx + 1) / chunks.length) * 100);
-        jobs.set(sessionId, job);
-      })
-    )
-  );
+    res.status(200).json(payload);
 
-  const merged = await mergeMp3WithFfmpeg(buffers);
-
-  const key = `${sessionId}/final.mp3`;
-  await uploadToR2(key, merged, "audio/mpeg");
-
-  job.status = "done";
-  job.resultKey = key;
-  jobs.set(sessionId, job);
-}
-
-// ----------------------
-// Routes/api/tts
-// ----------------------
-
-// Enqueue a new TTS job
-router.post("/api/tts", (req, res) => {
-  const { sessionId } = req.body || {};
-  if (!sessionId) return res.status(400).json({ error: "sessionId is required" });
-
-  if (!jobs.has(sessionId)) {
-    jobs.set(sessionId, { status: "queued", progress: 0 });
-    synthesizeAllChunks(sessionId).catch((err) => {
-      const j = jobs.get(sessionId) || {};
-      j.status = "error";
-      j.error = err.message;
-      jobs.set(sessionId, j);
-    });
+    try {
+      await Promise.all(localFiles.map(f => fs.unlink(f.local).catch(()=>{})));
+      await fs.rmdir(tmpDir).catch(()=>{});
+    } catch {}
+  } catch (err) {
+    logger.error("TTS failed", { error: err.message, stack: err.stack });
+    res.status(500).json({ error: err.message });
   }
-
-  res.status(202).json({
-    statusUrl: `/api/tts/${encodeURIComponent(sessionId)}/status`,
-    resultUrl: `/api/tts/${encodeURIComponent(sessionId)}/audio`,
-  });
-});
-
-// Poll job status
-router.get("/:sessionId/status", (req, res) => {
-  const job = jobs.get(req.params.sessionId);
-  if (!job) return res.status(404).json({ error: "unknown sessionId" });
-  res.json(job);
-});
-
-// Download final audio (when done)
-router.get("/:sessionId/audio", async (req, res) => {
-  const job = jobs.get(req.params.sessionId);
-  if (!job || job.status !== "done") {
-    return res.status(404).json({ error: "audio not ready" });
-  }
-
-  const stream = await getPodcastAudio(job.resultKey);
-  res.setHeader("Content-Type", "audio/mpeg");
-  stream.pipe(res);
 });
 
 export default router;
