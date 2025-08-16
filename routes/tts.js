@@ -5,11 +5,12 @@ import path from "path";
 import { promises as fs } from "fs";
 import { TextToSpeechClient } from "@google-cloud/text-to-speech";
 import pLimit from "p-limit";
+import fetch from "node-fetch";
 
 import { uploadToR2 } from "../utils/r2.js";
+import { getTextChunkUrls } from "../utils/textchunksR2.js";
 import mergeTTSChunks from "../mergeTTSChunks.js";
 import logger from "../utils/logger.js";
-import { loadScriptForSession } from "../utils/sessionStore.js"; // new util
 
 const router = express.Router();
 const ttsClient = new TextToSpeechClient();
@@ -46,13 +47,23 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "sessionId required" });
     }
 
-    // 🔹 Load the script for this sessionId
-    const scriptText = await loadScriptForSession(sessionId);
-    if (!scriptText) {
-      return res.status(404).json({ error: `No script found for session ${sessionId}` });
+    // 🔹 Step 1: get text chunk URLs
+    const textUrls = await getTextChunkUrls(sessionId);
+    if (!textUrls || textUrls.length === 0) {
+      return res.status(404).json({ error: `No text chunks for session ${sessionId}` });
     }
 
-    const pieces = splitIntoChunks(String(scriptText));
+    // 🔹 Step 2: download + combine
+    let scriptText = "";
+    for (const url of textUrls) {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`Failed to fetch ${url}`);
+      scriptText += await resp.text();
+      scriptText += "\n";
+    }
+
+    // 🔹 Step 3: split into TTS pieces
+    const pieces = splitIntoChunks(scriptText);
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `tts-${sessionId}-`));
 
     const synthOptions = {
@@ -63,21 +74,14 @@ router.post("/", async (req, res) => {
       pitch: 0.0,
     };
 
+    // 🔹 Step 4: synthesize + upload to R2
     const localFiles = await Promise.all(
       pieces.map((p, i) =>
         limit(async () => {
           const [resp] = await ttsClient.synthesizeSpeech({
             input: { text: p },
-            voice: {
-              languageCode: synthOptions.languageCode,
-              name: synthOptions.name,
-              ssmlGender: synthOptions.ssmlGender,
-            },
-            audioConfig: {
-              audioEncoding: "MP3",
-              speakingRate: synthOptions.speakingRate,
-              pitch: synthOptions.pitch,
-            },
+            voice: synthOptions,
+            audioConfig: { audioEncoding: "MP3" },
           });
 
           const buf = Buffer.from(resp.audioContent, "base64");
@@ -94,11 +98,11 @@ router.post("/", async (req, res) => {
 
     localFiles.sort((a,b)=>a.index-b.index);
 
+    // 🔹 Step 5: merge
     const mergedUrl = await mergeTTSChunks(localFiles.map(x=>x.local), sessionId);
 
-    const payload = {
+    res.status(200).json({
       sessionId,
-      count: localFiles.length,
       chunks: localFiles.map(({ index, bytes, url }) => ({
         index,
         bytesApprox: bytes,
@@ -106,10 +110,9 @@ router.post("/", async (req, res) => {
       })),
       merged: { url: mergedUrl },
       elapsedMs: Date.now() - started,
-    };
+    });
 
-    res.status(200).json(payload);
-
+    // cleanup tmp
     try {
       await Promise.all(localFiles.map(f => fs.unlink(f.local).catch(()=>{})));
       await fs.rmdir(tmpDir).catch(()=>{});
