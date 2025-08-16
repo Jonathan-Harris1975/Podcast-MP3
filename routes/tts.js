@@ -47,13 +47,13 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "sessionId required" });
     }
 
-    // 🔹 Step 1: get text chunk URLs
+    // 1️⃣ Get text chunk URLs
     const textUrls = await getTextChunkUrls(sessionId);
     if (!textUrls || textUrls.length === 0) {
       return res.status(404).json({ error: `No text chunks for session ${sessionId}` });
     }
 
-    // 🔹 Step 2: download + combine
+    // 2️⃣ Download and combine text
     let scriptText = "";
     for (const url of textUrls) {
       const resp = await fetch(url);
@@ -62,7 +62,7 @@ router.post("/", async (req, res) => {
       scriptText += "\n";
     }
 
-    // 🔹 Step 3: split into TTS pieces
+    // 3️⃣ Split into TTS chunks
     const pieces = splitIntoChunks(scriptText);
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `tts-${sessionId}-`));
 
@@ -74,7 +74,7 @@ router.post("/", async (req, res) => {
       pitch: 0.0,
     };
 
-    // 🔹 Step 4: synthesize + upload to R2
+    // 4️⃣ Generate TTS + upload to R2 (chunks bucket)
     const localFiles = await Promise.all(
       pieces.map((p, i) =>
         limit(async () => {
@@ -96,10 +96,10 @@ router.post("/", async (req, res) => {
       )
     );
 
-    localFiles.sort((a,b)=>a.index-b.index);
+    localFiles.sort((a, b) => a.index - b.index);
 
-    // 🔹 Step 5: merge
-    const mergedUrl = await mergeTTSChunks(localFiles.map(x=>x.local), sessionId);
+    // 5️⃣ Merge and upload to merged R2
+    const mergedUrl = await mergeTTSChunks(localFiles.map(x => x.local), sessionId);
 
     res.status(200).json({
       sessionId,
@@ -112,10 +112,10 @@ router.post("/", async (req, res) => {
       elapsedMs: Date.now() - started,
     });
 
-    // cleanup tmp
+    // Cleanup temp files
     try {
-      await Promise.all(localFiles.map(f => fs.unlink(f.local).catch(()=>{})));
-      await fs.rmdir(tmpDir).catch(()=>{});
+      await Promise.all(localFiles.map(f => fs.unlink(f.local).catch(() => {})));
+      await fs.rmdir(tmpDir).catch(() => {});
     } catch {}
   } catch (err) {
     logger.error("TTS failed", { error: err.message, stack: err.stack });
