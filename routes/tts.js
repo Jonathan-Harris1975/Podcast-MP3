@@ -1,10 +1,11 @@
 import express from "express";
 import textToSpeech from "@google-cloud/text-to-speech";
 import fetch from "node-fetch";
+import { Buffer } from "buffer";
 
 const router = express.Router();
 
-// 🔑 Load credentials from Render env var
+// 🔑 Load credentials
 if (!process.env.GOOGLE_KEY) {
   throw new Error("❌ GOOGLE_KEY environment variable is missing");
 }
@@ -25,7 +26,7 @@ const ttsClient = new textToSpeech.TextToSpeechClient({
 });
 
 // 🎙️ POST /api/tts
-// Payload: { "sessionId": "abc123" }
+// Payload: { "sessionId": "TT-2025-08-15" }
 router.post("/", async (req, res) => {
   try {
     const { sessionId } = req.body;
@@ -33,32 +34,46 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "sessionId is required" });
     }
 
-    // ⚡️ Construct R2 text file URL
-    // (update this pattern to match your bucket path)
-    const textFileUrl = `https://<your-r2-bucket-domain>/${sessionId}.txt`;
+    let chunkIndex = 1;
+    const audioBuffers = [];
 
-    // Fetch raw text from R2
-    const response = await fetch(textFileUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch text file: ${response.statusText}`);
+    while (true) {
+      const chunkFile = `${sessionId}/chunk-${chunkIndex}.txt`;
+      const textFileUrl = `https://pub-7a098297d4ef4011a01077c72929753c.r2.dev/${chunkFile}`;
+
+      const response = await fetch(textFileUrl);
+      if (!response.ok) {
+        // Stop when we hit missing chunk
+        if (chunkIndex === 1) {
+          throw new Error(`No chunks found for sessionId: ${sessionId}`);
+        }
+        break;
+      }
+
+      const text = await response.text();
+      if (text && text.trim().length > 0) {
+        const request = {
+          input: { text },
+          voice: { languageCode: "en-US", ssmlGender: "NEUTRAL" },
+          audioConfig: { audioEncoding: "MP3" },
+        };
+
+        const [ttsResponse] = await ttsClient.synthesizeSpeech(request);
+        audioBuffers.push(Buffer.from(ttsResponse.audioContent, "base64"));
+      }
+
+      chunkIndex++;
     }
 
-    const text = await response.text();
-    if (!text || text.trim().length === 0) {
-      return res.status(400).json({ error: "Text file was empty" });
+    if (audioBuffers.length === 0) {
+      return res.status(400).json({ error: "No valid chunks found" });
     }
 
-    // Google TTS request
-    const request = {
-      input: { text },
-      voice: { languageCode: "en-US", ssmlGender: "NEUTRAL" },
-      audioConfig: { audioEncoding: "MP3" },
-    };
-
-    const [ttsResponse] = await ttsClient.synthesizeSpeech(request);
+    // Concatenate all MP3 buffers
+    const finalAudio = Buffer.concat(audioBuffers);
 
     res.set("Content-Type", "audio/mpeg");
-    res.send(ttsResponse.audioContent);
+    res.send(finalAudio);
   } catch (err) {
     console.error("TTS error:", err);
     res.status(500).json({ error: "Failed to synthesize speech" });
