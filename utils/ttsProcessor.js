@@ -1,6 +1,6 @@
 const express = require('express');
 const { TextToSpeechClient } = require('@google-cloud/text-to-speech');
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 const winston = require('winston');
 
 const app = express();
@@ -8,7 +8,7 @@ app.use(express.json({ limit: '10mb' }));
 
 // Configure logging
 const logger = winston.createLogger({
-  level: 'info',
+  level: process.env.LOG_LEVEL || 'info',
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.json()
@@ -49,48 +49,82 @@ try {
     });
     console.log('R2 client initialized successfully');
   } else {
-    console.warn('R2 credentials missing - will return base64 instead');
+    throw new Error('R2 credentials missing');
   }
 } catch (error) {
   console.error('Failed to initialize R2:', error.message);
+  process.exit(1);
 }
 
-// Split text into chunks
-function splitTextIntoChunks(text, maxChunkSize = 3400) {
-  const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
-  const chunks = [];
-  let currentChunk = '';
-
-  for (const sentence of sentences) {
-    const trimmedSentence = sentence.trim();
-    if (!trimmedSentence) continue;
-
-    const potentialChunk = currentChunk + (currentChunk ? '. ' : '') + trimmedSentence;
+// Get text content from R2 text file
+async function getTextFromR2(bucket, key) {
+  logger.info('Fetching text file from R2', { bucket, key });
+  
+  try {
+    const command = new GetObjectCommand({
+      Bucket: bucket,
+      Key: key
+    });
     
-    if (potentialChunk.length <= maxChunkSize) {
-      currentChunk = potentialChunk;
-    } else {
-      if (currentChunk) {
-        chunks.push(currentChunk + '.');
-        currentChunk = trimmedSentence;
-      } else {
-        chunks.push(trimmedSentence + '.');
-      }
-    }
+    const response = await s3Client.send(command);
+    const textContent = await response.Body.transformToString();
+    
+    logger.info('Text file retrieved', { 
+      key, 
+      length: textContent.length 
+    });
+    
+    return textContent.trim();
+  } catch (error) {
+    logger.error('Failed to fetch text file', { 
+      bucket, 
+      key, 
+      error: error.message 
+    });
+    throw new Error(`Failed to fetch text file ${key}: ${error.message}`);
   }
-
-  if (currentChunk) {
-    chunks.push(currentChunk + '.');
-  }
-
-  return chunks.filter(chunk => chunk.trim().length > 0);
 }
 
-// Convert text to speech
+// List text files for a session
+async function listTextFiles(sessionId) {
+  const bucket = process.env.R2_BUCKET_CHUNKS_T || 'raw-text';
+  const prefix = `${sessionId}/`;
+  
+  logger.info('Listing text files', { bucket, prefix });
+  
+  try {
+    const command = new ListObjectsV2Command({
+      Bucket: bucket,
+      Prefix: prefix
+    });
+    
+    const response = await s3Client.send(command);
+    const textFiles = (response.Contents || [])
+      .filter(obj => obj.Key.endsWith('.txt'))
+      .sort((a, b) => a.Key.localeCompare(b.Key));
+    
+    logger.info('Found text files', { 
+      sessionId, 
+      count: textFiles.length,
+      files: textFiles.map(f => f.Key)
+    });
+    
+    return textFiles;
+  } catch (error) {
+    logger.error('Failed to list text files', { 
+      sessionId, 
+      error: error.message 
+    });
+    throw new Error(`Failed to list text files for ${sessionId}: ${error.message}`);
+  }
+}
+
+// Convert text to speech using Google TTS
 async function synthesizeSpeech(text, voice, audioConfig) {
   logger.info('Starting TTS synthesis', { 
     textLength: text.length,
-    voice: voice?.name || 'default'
+    voice: voice?.name || 'default',
+    textPreview: text.substring(0, 100) + '...'
   });
 
   const request = {
@@ -106,6 +140,7 @@ async function synthesizeSpeech(text, voice, audioConfig) {
   };
 
   try {
+    logger.info('Calling Google TTS API...');
     const [response] = await ttsClient.synthesizeSpeech(request);
     
     if (!response.audioContent || response.audioContent.length === 0) {
@@ -113,33 +148,34 @@ async function synthesizeSpeech(text, voice, audioConfig) {
     }
 
     logger.info('TTS synthesis successful', { 
-      audioSize: response.audioContent.length 
+      audioSize: response.audioContent.length
     });
     
     return response.audioContent;
   } catch (error) {
     logger.error('TTS synthesis failed', { 
       error: error.message,
-      code: error.code 
+      code: error.code,
+      details: error.details
     });
     throw new Error(`TTS failed: ${error.message}`);
   }
 }
 
-// Upload to R2
-async function uploadToR2(audioBuffer, key, bucket) {
-  if (!s3Client) {
-    throw new Error('R2 client not available');
-  }
+// Upload audio to R2 chunks bucket
+async function uploadAudioToR2(audioBuffer, filename) {
+  const bucket = process.env.R2_BUCKET_CHUNKS || 'podcast-chunks';
+  const baseUrl = process.env.R2_PUBLIC_BASE_URL_CHUNKS;
 
-  logger.info('Uploading to R2', { 
-    key, 
-    size: audioBuffer.length 
+  logger.info('Uploading audio to R2', { 
+    bucket,
+    filename, 
+    size: audioBuffer.length
   });
 
   const command = new PutObjectCommand({
     Bucket: bucket,
-    Key: key,
+    Key: filename,
     Body: audioBuffer,
     ContentType: 'audio/mpeg',
     ContentLength: audioBuffer.length
@@ -147,117 +183,198 @@ async function uploadToR2(audioBuffer, key, bucket) {
 
   try {
     await s3Client.send(command);
-    const url = `${process.env.R2_PUBLIC_BASE_URL}/${key}`;
-    logger.info('R2 upload successful', { url });
+    const url = `${baseUrl}/${filename}`;
+    logger.info('Audio upload successful', { url });
     return url;
   } catch (error) {
-    logger.error('R2 upload failed', { error: error.message });
+    logger.error('R2 upload failed', { 
+      bucket,
+      filename,
+      error: error.message 
+    });
     throw new Error(`Upload failed: ${error.message}`);
   }
 }
 
-// Process single chunk
-async function processChunk(text, index, voice, audioConfig, sessionId, returnBase64 = false) {
+// Process text file to audio
+async function processTextFileToAudio(textFile, index, voice, audioConfig, sessionId) {
   try {
-    logger.info('Processing chunk', { index, sessionId });
+    const textBucket = process.env.R2_BUCKET_CHUNKS_T || 'raw-text';
+    
+    logger.info('Processing text file to audio', { 
+      index,
+      sessionId,
+      textFile: textFile.Key
+    });
 
-    // *** THIS IS THE CRITICAL PART - ACTUALLY CALL TTS ***
-    const audioBuffer = await synthesizeSpeech(text, voice, audioConfig);
-
-    if (returnBase64 || !s3Client) {
-      // Return base64 if no R2 or requested
-      return {
-        index,
-        base64: audioBuffer.toString('base64'),
-        bytesApprox: audioBuffer.length
-      };
-    } else {
-      // Upload to R2 and return URL
-      const filename = `${sessionId}/chunk-${index + 1}.mp3`; // .MP3 NOT .TXT!
-      const url = await uploadToR2(audioBuffer, filename, process.env.R2_BUCKET || 'default-bucket');
-      
-      return {
-        index,
-        url,
-        bytesApprox: audioBuffer.length
-      };
+    // 1. Get text content from the text file
+    const textContent = await getTextFromR2(textBucket, textFile.Key);
+    
+    if (!textContent || textContent.length === 0) {
+      throw new Error(`Text file ${textFile.Key} is empty`);
     }
+
+    // 2. Convert text to speech
+    const audioBuffer = await synthesizeSpeech(textContent, voice, audioConfig);
+
+    // 3. Create audio filename (replace .txt with .mp3)
+    const audioFilename = textFile.Key.replace('.txt', '.mp3').replace(`${sessionId}/`, `${sessionId}/audio-`);
+
+    // 4. Upload audio to chunks bucket
+    const audioUrl = await uploadAudioToR2(audioBuffer, audioFilename);
+
+    return {
+      index,
+      originalTextFile: textFile.Key,
+      audioFile: audioFilename,
+      url: audioUrl,
+      bytesApprox: audioBuffer.length,
+      textLength: textContent.length
+    };
+
   } catch (error) {
-    logger.error('Chunk processing failed', { 
-      index, 
-      sessionId, 
+    logger.error('Failed to process text file', { 
+      index,
+      sessionId,
+      textFile: textFile.Key,
       error: error.message 
     });
     throw error;
   }
 }
 
-// Main TTS endpoint - FIXED VERSION
+// Main endpoint - Process existing text files to audio
 app.post('/chunked', async (req, res) => {
-  const sessionId = `TT-${new Date().toISOString().split('T')[0]}-${Date.now()}`;
-  
-  logger.info('Processing TTS request', { sessionId });
-
   try {
     const {
-      text,
-      voice,
-      audioConfig,
-      returnBase64 = false
+      sessionId // Only sessionId is required - everything else uses defaults
     } = req.body;
 
-    if (!text || typeof text !== 'string') {
-      return res.status(400).json({ error: 'Text is required' });
+    if (!sessionId) {
+      return res.status(400).json({ 
+        error: 'sessionId is required - this should match the folder name in raw-text bucket' 
+      });
     }
 
-    // Split text into chunks
-    const chunks = splitTextIntoChunks(text);
-    logger.info('Text split into chunks', { 
-      sessionId, 
-      chunkCount: chunks.length,
-      totalLength: text.length 
+    // Use default voice and audio config since files are already set up
+    const voice = {
+      languageCode: 'en-US',
+      name: 'en-US-Wavenet-D'
+    };
+
+    const audioConfig = {
+      audioEncoding: 'MP3',
+      speakingRate: 1.0
+    };
+
+    const concurrency = 3;
+
+    logger.info('Processing TTS request for existing text files', { sessionId });
+
+    // 1. List all text files for this session
+    const textFiles = await listTextFiles(sessionId);
+    
+    if (textFiles.length === 0) {
+      return res.status(404).json({ 
+        error: `No text files found for session ${sessionId}`,
+        hint: 'Make sure text files exist in the raw-text bucket under this session ID'
+      });
+    }
+
+    logger.info('Found text files to process', { 
+      sessionId,
+      fileCount: textFiles.length 
     });
 
-    // Process all chunks - ACTUALLY DO TTS PROCESSING
+    // 2. Process text files to audio with concurrency control
     const results = [];
-    for (let i = 0; i < chunks.length; i++) {
-      const result = await processChunk(
-        chunks[i], 
-        i, 
-        voice, 
-        audioConfig, 
+    for (let i = 0; i < textFiles.length; i += concurrency) {
+      const batch = textFiles.slice(i, i + concurrency);
+      const batchPromises = batch.map((textFile, batchIndex) => {
+        const index = i + batchIndex;
+        return processTextFileToAudio(textFile, index, voice, audioConfig, sessionId);
+      });
+
+      logger.info('Processing batch of text files', { 
         sessionId, 
-        returnBase64
-      );
-      results.push(result);
+        batchStart: i, 
+        batchSize: batch.length 
+      });
+
+      const batchResults = await Promise.allSettled(batchPromises);
+      
+      // Check for failures
+      const failed = batchResults.filter(r => r.status === 'rejected');
+      if (failed.length > 0) {
+        logger.error('Batch processing failed', { 
+          sessionId, 
+          failedCount: failed.length,
+          errors: failed.map(f => f.reason.message)
+        });
+        throw new Error(`Failed to process ${failed.length} text files: ${failed[0].reason.message}`);
+      }
+
+      results.push(...batchResults.map(r => r.value));
     }
 
     const totalBytes = results.reduce((sum, r) => sum + r.bytesApprox, 0);
+    const totalTextLength = results.reduce((sum, r) => sum + r.textLength, 0);
 
     logger.info('TTS processing complete', { 
       sessionId, 
-      chunkCount: results.length,
-      totalBytes 
+      processedCount: results.length,
+      totalAudioBytes: totalBytes,
+      totalTextLength: totalTextLength,
+      avgAudioSize: Math.round(totalBytes / results.length)
     });
 
-    // Return the results
+    // Return the audio URLs
     res.json({
       sessionId,
       count: results.length,
-      chunks: results,
-      summaryBytesApprox: totalBytes
+      chunks: results.map(r => ({
+        index: r.index,
+        url: r.url,
+        bytesApprox: r.bytesApprox,
+        originalTextFile: r.originalTextFile,
+        audioFile: r.audioFile
+      })),
+      summaryBytesApprox: totalBytes,
+      totalTextLength: totalTextLength
     });
 
   } catch (error) {
     logger.error('TTS request failed', { 
-      sessionId, 
-      error: error.message 
+      error: error.message,
+      stack: error.stack
     });
     
     res.status(500).json({
       error: 'TTS processing failed',
-      details: error.message,
-      sessionId
+      details: error.message
+    });
+  }
+});
+
+// Health check endpoint to verify text files exist for a session
+app.get('/session/:sessionId/files', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const textFiles = await listTextFiles(sessionId);
+    
+    res.json({
+      sessionId,
+      textFilesFound: textFiles.length,
+      files: textFiles.map(f => ({
+        key: f.Key,
+        size: f.Size,
+        lastModified: f.LastModified
+      }))
+    });
+  } catch (error) {
+    res.status(404).json({
+      error: `No text files found for session ${req.params.sessionId}`,
+      details: error.message
     });
   }
 });
@@ -266,22 +383,40 @@ app.post('/chunked', async (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     status: 'ok',
-    service: 'TTS Chunker',
+    service: 'TTS Chunker Service',
+    environment: process.env.NODE_ENV || 'development',
     features: {
       tts: !!ttsClient,
-      r2: !!s3Client
+      ssml: process.env.SSML_ENABLED === 'true',
+      r2: !!s3Client,
+      podcast: true
+    },
+    config: {
+      maxChunkBytes: parseInt(process.env.MAX_SSML_CHUNK_BYTES) || 3400,
+      trustProxy: true,
+      cors: true,
+      rateLimit: true
     }
   });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.LPORT || process.env.PORT || 3000;
 app.listen(PORT, () => {
   logger.info('TTS Service running', { 
+    message: `TTS Service running on port ${PORT}`,
     port: PORT,
     environment: process.env.NODE_ENV || 'development',
     features: {
       tts: !!ttsClient,
-      r2: !!s3Client
+      ssml: process.env.SSML_ENABLED === 'true',
+      r2: !!s3Client,
+      podcast: true
+    },
+    config: {
+      maxChunkBytes: parseInt(process.env.MAX_SSML_CHUNK_BYTES) || 3400,
+      trustProxy: true,
+      cors: true,
+      rateLimit: true
     }
   });
 });
