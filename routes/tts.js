@@ -144,11 +144,11 @@ async function synthesizeAllChunks(sessionId) {
 }
 
 // ----------------------
-// Routes
+// Routes/api/tts
 // ----------------------
 
 // Enqueue a new TTS job
-router.post("/", (req, res) => {
+router.post("/api/tts", (req, res) => {
   const { sessionId } = req.body || {};
   if (!sessionId) return res.status(400).json({ error: "sessionId is required" });
 
