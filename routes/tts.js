@@ -1,6 +1,6 @@
 import express from "express";
 import { getURLsBySessionId } from "../utils/textchunksR2.js";
-import { generateTTSChunks } from "../utils/generateTTS.js";
+import { processTTSChunks } from "../utils/processorTTS.js";   // ✅ correct file
 import { mergeChunks } from "../utils/mergeTTSChunks.js";
 import logger from "../utils/logger.js";
 
@@ -32,7 +32,7 @@ router.post("/", async (req, res) => {
     });
 
     // 2. Generate TTS chunks & upload to R2
-    const audioChunkUrls = await generateTTSChunks(sessionId, textChunkUrls);
+    const audioChunkUrls = await processTTSChunks(sessionId, textChunkUrls);
     logger.info("Generated and uploaded audio chunks", {
       sessionId,
       count: audioChunkUrls.length,
