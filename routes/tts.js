@@ -26,7 +26,7 @@ router.post('/chunked', async (req, res) => {
             voice = { languageCode: 'en-US', name: 'en-US-Wavenet-D' },
             audioConfig = { audioEncoding: 'MP3', speakingRate: 1.0 },
             concurrency = 3,
-            R2_BUCKET,
+            R2_BUCKET = process.env.R2_BUCKET_CHUNKS, // Default to chunks bucket
             R2_PREFIX,
             returnBase64 = false,
             urls = []
@@ -67,7 +67,8 @@ router.post('/chunked', async (req, res) => {
         }
 
         // Chunk the text for TTS processing
-        const chunks = chunkTextForTTS(processedText, 5000); // 5000 char max per chunk
+        const maxChunkSize = parseInt(process.env.MAX_SSML_CHUNK_BYTES) || 3400;
+        const chunks = chunkTextForTTS(processedText, maxChunkSize);
         
         if (chunks.length === 0) {
             return res.status(400).json({
@@ -286,11 +287,28 @@ async function uploadAudio(audioBuffer, options) {
 }
 
 /**
- * Upload to R2 storage
+ * Upload to R2 storage using your configured buckets
  */
 async function uploadToR2(audioBuffer, bucket, key) {
-    // Placeholder - implement with AWS SDK v3 or similar
-    const baseUrl = process.env.R2_PUBLIC_BASE_URL || 'https://your-r2-domain.com';
+    // Use the appropriate R2 public base URL based on bucket
+    let baseUrl;
+    
+    switch (bucket) {
+        case process.env.R2_BUCKET_CHUNKS:
+            baseUrl = process.env.R2_PUBLIC_BASE_URL_CHUNKS;
+            break;
+        case process.env.R2_BUCKET_CHUNKS_MERGED:
+            baseUrl = process.env.R2_PUBLIC_BASE_URL_CHUNKS_MERGED;
+            break;
+        case process.env.R2_BUCKET_PODCAST:
+            baseUrl = process.env.R2_PUBLIC_BASE_URL_PODCAST;
+            break;
+        default:
+            baseUrl = process.env.R2_PUBLIC_BASE_URL_1;
+    }
+    
+    // In production, you would use AWS SDK v3 to actually upload
+    // For now, return the expected URL structure
     return `${baseUrl}/${key}`;
 }
 
