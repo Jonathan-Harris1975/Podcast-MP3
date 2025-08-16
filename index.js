@@ -6,6 +6,8 @@ import cors from "cors";
 import rateLimit from "express-rate-limit";
 import http from "http";
 
+import ttsRouter from "./routes/tts.js"; // ✅ only this route
+
 // Load env vars
 dotenv.config();
 
@@ -21,7 +23,7 @@ app.use(helmet());
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// CORS (adjust origins to your frontend domain)
+// CORS (adjust allowed origins for your frontend)
 const allowedOrigins = [
   /\.render\.com$/,
   "http://localhost:3000",
@@ -32,7 +34,11 @@ app.use(
   cors({
     origin: (origin, cb) => {
       if (!origin) return cb(null, true); // allow curl / server-side
-      if (allowedOrigins.some((o) => o instanceof RegExp ? o.test(origin) : o === origin)) {
+      if (
+        allowedOrigins.some((o) =>
+          o instanceof RegExp ? o.test(origin) : o === origin
+        )
+      ) {
         return cb(null, true);
       }
       return cb(new Error("Not allowed by CORS"));
@@ -41,22 +47,17 @@ app.use(
   })
 );
 
-// Rate limiting (tweak values as needed)
+// Rate limiting
 const limiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 100, // max requests per minute per IP
+  windowMs: 60 * 1000, // 1 min
+  max: 100, // max requests per IP
 });
 app.use(limiter);
 
 // ----------------------
 // Routes
 // ----------------------
-import ttsRouter from "./routes/tts.js";
-import scrapeRouter from "./routes/scrape.js";
-// add more routers if you have them
-
 app.use("/api/tts", ttsRouter);
-app.use("/api/scrape", scrapeRouter);
 
 // Health check
 app.get("/health", (_req, res) => {
@@ -76,9 +77,8 @@ app.use((err, _req, res, _next) => {
 // ----------------------
 const PORT = process.env.PORT || 3001;
 
-// ⚠️ Note: Cloudflare (custom domains) kills requests >100s regardless.
-// Render direct URLs can run longer, but async jobs are safer.
-server.setTimeout(580000); // ~9m40s max per request
+// ⚠️ Cloudflare kills requests >100s. Use async jobs (done in routes/tts.js).
+server.setTimeout(580000); // ~9m40s
 app.use((req, res, next) => {
   res.setTimeout(580000, () => {
     console.warn("Request timed out:", req.originalUrl);
