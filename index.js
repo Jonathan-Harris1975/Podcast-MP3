@@ -1,27 +1,29 @@
-// index.js or app.js - Updated Express configuration
+// index.js - Corrected import paths
 
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 
+// CORRECTED: Import TTS routes with proper relative path
+import ttsRoutes from './routes/tts.js';
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // CRITICAL FIX: Enable trust proxy to handle X-Forwarded-For headers correctly
-// This fixes the ValidationError for express-rate-limit when deployed behind a proxy (like Render)
 app.set('trust proxy', 1);
 
 // Security middleware
 app.use(helmet({
-    contentSecurityPolicy: false, // Disable CSP if needed for your app
+    contentSecurityPolicy: false,
 }));
 
 // CORS configuration
 app.use(cors({
     origin: process.env.NODE_ENV === 'production' 
-        ? ['https://your-frontend-domain.com'] // Replace with your actual frontend domains
-        : true, // Allow all origins in development
+        ? ['https://your-frontend-domain.com']
+        : true,
     credentials: true,
     optionsSuccessStatus: 200
 }));
@@ -33,20 +35,19 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Rate limiting configuration
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: process.env.NODE_ENV === 'production' ? 100 : 1000, // Limit each IP to 100 requests per windowMs in production
+    max: process.env.NODE_ENV === 'production' ? 100 : 1000,
     message: {
         error: 'Too many requests from this IP',
         retryAfter: '15 minutes'
     },
-    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-    // The trust proxy setting above ensures this works correctly with X-Forwarded-For
+    standardHeaders: true,
+    legacyHeaders: false,
 });
 
 // Apply rate limiting to all requests
 app.use(limiter);
 
-// Health check endpoint (excluded from rate limiting)
+// Health check endpoint
 app.get('/health', (req, res) => {
     res.status(200).json({
         status: 'healthy',
@@ -60,19 +61,16 @@ app.get('/health', (req, res) => {
     });
 });
 
-// Import and use your TTS routes
-// Replace this with your actual route imports
-import ttsRoutes from './src/routes/tts.js';
+// Use TTS routes
 app.use('/tts', ttsRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error('Error:', err);
     
-    // Handle rate limiting errors specifically
     if (err.code === 'ERR_ERL_UNEXPECTED_X_FORWARDED_FOR') {
         console.warn('Rate limiting configuration warning (non-critical):', err.message);
-        return next(); // Continue processing the request
+        return next();
     }
     
     res.status(err.status || 500).json({
