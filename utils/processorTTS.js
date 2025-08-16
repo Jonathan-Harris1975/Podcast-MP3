@@ -1,10 +1,11 @@
+
 // utils/processorTTS.js
-import { r2upload } from "./r2upload.js";
+import { r2 } from "./r2.js";   // ✅ use your existing chunks R2 uploader
 import logger from "./logger.js";
 
 /**
  * Splits text into chunks, generates TTS audio for each,
- * and uploads them to R2.
+ * and uploads them to R2 (chunks bucket).
  *
  * @param {string} sessionId - Unique session identifier
  * @param {string[]} textChunks - Array of text strings
@@ -22,15 +23,15 @@ export async function processTTSChunks(sessionId, textChunks, ttsFn) {
     const text = textChunks[i];
 
     try {
-      // Generate audio buffer
+      // Generate audio buffer from TTS
       const audioBuffer = await ttsFn(text);
       if (!audioBuffer) {
         throw new Error(`TTS returned empty audio for chunk ${i}`);
       }
 
-      // Upload to R2 bucket
+      // Upload to R2 (chunks bucket)
       const key = `${sessionId}/chunk-${i}.mp3`;
-      const publicUrl = await r2upload(key, audioBuffer, "audio/mpeg");
+      const publicUrl = await r2(key, audioBuffer, "audio/mpeg");
 
       uploadedUrls.push(publicUrl);
 
