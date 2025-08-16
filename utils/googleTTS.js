@@ -1,45 +1,42 @@
-// utils/googleTTS.js
-import fs from "fs";
+import express from "express";
 import textToSpeech from "@google-cloud/text-to-speech";
 
-const { GCP_PROJECT_ID, GCP_LOCATION, GOOGLE_APPLICATION_CREDENTIALS } = process.env;
+const router = express.Router();
 
-// Validate env vars
-if (!GOOGLE_APPLICATION_CREDENTIALS) {
-  throw new Error(
-    "Missing GOOGLE_APPLICATION_CREDENTIALS. Set this to the full path of your service account JSON file (on Render: /etc/secrets/<file>.json)."
-  );
-}
-if (!GCP_PROJECT_ID) {
-  console.warn("⚠️ GCP_PROJECT_ID not set. Default project from credentials will be used.");
-}
-if (!GCP_LOCATION) {
-  console.warn("⚠️ GCP_LOCATION not set. Default location (global) will be used.");
-}
+// Load credentials from environment variable GOOGLE_CREDENTIALS
+// (paste the whole JSON service account into Render’s env var)
+const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
 
-// Create Google Cloud TTS client with explicit project/location
-const client = new textToSpeech.TextToSpeechClient({
-  projectId: GCP_PROJECT_ID,
-  keyFilename: GOOGLE_APPLICATION_CREDENTIALS,
+const ttsClient = new textToSpeech.TextToSpeechClient({
+  credentials: {
+    client_email: credentials.client_email,
+    private_key: credentials.private_key,
+  },
 });
 
-/**
- * Synthesizes speech from text and saves it as an MP3 file.
- * @param {string} text - The text to convert to speech.
- * @param {string} outputPath - The path where the MP3 should be saved.
- */
-export async function synthesizeAndSave(text, outputPath) {
-  const request = {
-    input: { text },
-    voice: {
-      languageCode: "en-GB",
-      ssmlGender: "MALE",
-    },
-    audioConfig: { audioEncoding: "MP3" },
-  };
+router.post("/", async (req, res) => {
+  try {
+    const { text } = req.body;
 
-  const [response] = await client.synthesizeSpeech(request);
-  fs.writeFileSync(outputPath, response.audioContent, "binary");
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({ error: "Text is required" });
+    }
 
-  console.log(`✅ Audio content written to file: ${outputPath}`);
-}
+    const request = {
+      input: { text },
+      // pick your voice and language here
+      voice: { languageCode: "en-US", ssmlGender: "NEUTRAL" },
+      audioConfig: { audioEncoding: "MP3" },
+    };
+
+    const [response] = await ttsClient.synthesizeSpeech(request);
+
+    res.set("Content-Type", "audio/mpeg");
+    res.send(response.audioContent);
+  } catch (err) {
+    console.error("TTS error:", err);
+    res.status(500).json({ error: "Failed to synthesize speech" });
+  }
+});
+
+export default router;
