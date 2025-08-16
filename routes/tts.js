@@ -8,13 +8,13 @@ import ffmpegPath from "ffmpeg-static";
 import os from "os";
 import fs from "fs/promises";
 import path from "path";
-import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
+
+import { uploadToR2, getPodcastAudio } from "../utils/r2.js";
 
 const router = express.Router();
 
 // ----------------------
-// Setup Google TTS
+// Google TTS setup
 // ----------------------
 const googleCreds = JSON.parse(process.env.GOOGLE_KEY || "{}");
 const ttsClient = new textToSpeech.TextToSpeechClient({
@@ -26,34 +26,21 @@ const ttsClient = new textToSpeech.TextToSpeechClient({
 });
 
 // ----------------------
-// Setup R2 (S3 API)
-// ----------------------
-const s3 = new S3Client({
-  region: "auto",
-  endpoint: process.env.R2_ENDPOINT,
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-  },
-  requestHandler: new NodeHttpHandler({
-    requestTimeout: 120000,
-    connectionTimeout: 30000,
-  }),
-});
-const R2_BUCKET = process.env.R2_BUCKET_PODCAST; // final MP3s
-
-// ----------------------
 // Job store (in-memory)
 // ----------------------
 const jobs = new Map();
 
 // ----------------------
-// Helpers
+// Config
 // ----------------------
 const FETCH_TIMEOUT_MS = +process.env.FETCH_TIMEOUT_MS || 10000;
 const TTS_CONCURRENCY = +process.env.TTS_CONCURRENCY || 3;
 const MAX_CHUNKS = +process.env.MAX_CHUNKS || 500;
+const CHUNKS_BASE_URL = process.env.R2_PUBLIC_BASE_URL_CHUNKS;
 
+// ----------------------
+// Helpers
+// ----------------------
 function fetchWithTimeout(url, ms = FETCH_TIMEOUT_MS) {
   const ac = new AbortController();
   const id = setTimeout(() => ac.abort(), ms);
@@ -61,12 +48,12 @@ function fetchWithTimeout(url, ms = FETCH_TIMEOUT_MS) {
 }
 
 async function listChunkTexts(sessionId) {
-  const base = process.env.R2_PUBLIC_BASE_URL_CHUNKS;
-  if (!base) throw new Error("R2_PUBLIC_BASE_URL_CHUNKS not configured");
-
+  if (!CHUNKS_BASE_URL) {
+    throw new Error("R2_PUBLIC_BASE_URL_CHUNKS not configured");
+  }
   const chunks = [];
   for (let i = 1; i <= MAX_CHUNKS; i++) {
-    const url = `${base}/${sessionId}/chunk-${i}.txt`;
+    const url = `${CHUNKS_BASE_URL}/${sessionId}/chunk-${i}.txt`;
     const resp = await fetchWithTimeout(url);
     if (!resp.ok) {
       if (i === 1) throw new Error(`No chunks found for ${sessionId}`);
@@ -81,6 +68,7 @@ async function listChunkTexts(sessionId) {
 async function mergeMp3WithFfmpeg(buffers) {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "merge-"));
   const listPath = path.join(tmp, "list.txt");
+
   const files = await Promise.all(
     buffers.map(async (b, i) => {
       const p = path.join(tmp, `p${i}.mp3`);
@@ -88,6 +76,7 @@ async function mergeMp3WithFfmpeg(buffers) {
       return p;
     })
   );
+
   await fs.writeFile(
     listPath,
     files.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join("\n")
@@ -113,10 +102,11 @@ async function mergeMp3WithFfmpeg(buffers) {
       code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}`))
     );
   });
+
   return fs.readFile(out);
 }
 
-async function synthesizeAllChunks(sessionId, jobs) {
+async function synthesizeAllChunks(sessionId) {
   const job = jobs.get(sessionId);
   job.status = "running";
   jobs.set(sessionId, job);
@@ -145,16 +135,8 @@ async function synthesizeAllChunks(sessionId, jobs) {
 
   const merged = await mergeMp3WithFfmpeg(buffers);
 
-  // upload to R2
   const key = `${sessionId}/final.mp3`;
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: R2_BUCKET,
-      Key: key,
-      Body: merged,
-      ContentType: "audio/mpeg",
-    })
-  );
+  await uploadToR2(key, merged, "audio/mpeg");
 
   job.status = "done";
   job.resultKey = key;
@@ -172,7 +154,7 @@ router.post("/", (req, res) => {
 
   if (!jobs.has(sessionId)) {
     jobs.set(sessionId, { status: "queued", progress: 0 });
-    synthesizeAllChunks(sessionId, jobs).catch((err) => {
+    synthesizeAllChunks(sessionId).catch((err) => {
       const j = jobs.get(sessionId) || {};
       j.status = "error";
       j.error = err.message;
@@ -200,15 +182,9 @@ router.get("/:sessionId/audio", async (req, res) => {
     return res.status(404).json({ error: "audio not ready" });
   }
 
-  const obj = await s3.send(
-    new GetObjectCommand({
-      Bucket: R2_BUCKET,
-      Key: job.resultKey,
-    })
-  );
-
+  const stream = await getPodcastAudio(job.resultKey);
   res.setHeader("Content-Type", "audio/mpeg");
-  obj.Body.pipe(res);
+  stream.pipe(res);
 });
 
 export default router;
